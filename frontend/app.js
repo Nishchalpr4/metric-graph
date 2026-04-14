@@ -488,8 +488,6 @@ function renderSegmentBreakdown(result, warnings) {
   `);
 }
 
-}
-
 async function loadGraphExplorerEmbedded() {
   await loadGraphInPanel();
 }
