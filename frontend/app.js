@@ -154,11 +154,6 @@ async function renderDirectResult(result, segment, warnings = [], query_text = '
       </div>
     </div>`;
 
-  await loadGraphInPanel(result, qm);
-}
-
-
-  // Load graph into left panel
   await loadGraphInPanel();
 }
 
