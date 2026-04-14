@@ -377,7 +377,7 @@ header .subtitle { color: var(--muted); font-size: 12px; }
 .gn-cat  { font-size: 10px; color: var(--muted); }
 
 /* ── Tabs ─────────────────────────────────────────────────── */
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; padding-bottom: 12px; position: sticky; top: 0; z-index: 100; background: var(--bg); }
 .tab-btn {
   padding: 8px 16px;
   font-size: 13px;
@@ -390,7 +390,7 @@ header .subtitle { color: var(--muted); font-size: 12px; }
 }
 .tab-btn:hover { color: var(--text); }
 .tab-btn.active { color: var(--accent2); border-bottom-color: var(--accent2); }
-.tab-panel { display: none; }
+.tab-panel { display: none; max-height: 70vh; overflow-y: auto; }
 .tab-panel.active { display: block; }
 
 /* ── Loading / error states ─────────────────────────────── */
