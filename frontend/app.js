@@ -387,12 +387,14 @@ function renderSegmentBreakdown(result, warnings) {
 }
 
 async function loadGraphExplorer() {
-  const container = document.getElementById('graphContainer');
-  if (!container) return;
+  showLoading('Loading graph...');
   try {
     const data = await apiFetch('/api/graph');
     const nodes = data.nodes || [];
     const edges = data.edges || [];
+    
+    const container = document.createElement('div');
+    container.id = 'graphContainer';
 
     // Create hierarchical layout
     const nodePositions = {};
@@ -468,7 +470,7 @@ async function loadGraphExplorer() {
       `;
     }).join('');
 
-    container.innerHTML = `
+    const graphHTML = `
       <div class="graph-legend">
         <div class="legend-item"><div class="legend-dot" style="background:var(--yellow)"></div>Base (input) metric</div>
         <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Derived metric</div>
@@ -507,8 +509,9 @@ async function loadGraphExplorer() {
 
     // Store for use in showNodeDetail
     window._graphData = { nodes, edges };
+    showContent(graphHTML);
   } catch (e) {
-    container.innerHTML = `<div class="error-banner">Could not load graph: ${escHtml(e.message)}</div>`;
+    showError('Failed to load graph: ' + e.message);
   }
 }
 
