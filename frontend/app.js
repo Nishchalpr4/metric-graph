@@ -47,7 +47,7 @@ async function runNLQuery() {
       method: 'POST',
       body: JSON.stringify({ query: q }),
     });
-    renderQueryResult(result, q);
+    await renderQueryResult(result, q);
   } catch (e) {
     showError(e.message);
   }
@@ -57,7 +57,7 @@ async function runNLQuery() {
 // Rendering
 // ─────────────────────────────────────────────────────────────────────────────
 
-function renderQueryResult(data, raw_query) {
+async function renderQueryResult(data, raw_query) {
   if (data.result && data.result.error) {
     showError(data.result.error);
     return;
@@ -74,10 +74,10 @@ function renderQueryResult(data, raw_query) {
     return;
   }
   // Default: explain_change result
-  renderDirectResult(data.result, data.parsed && data.parsed.segment, data.warnings || [], raw_query);
+  await renderDirectResult(data.result, data.parsed && data.parsed.segment, data.warnings || [], raw_query);
 }
 
-function renderDirectResult(result, segment, warnings = [], query_text = '') {
+async function renderDirectResult(result, segment, warnings = [], query_text = '') {
   if (!result || result.error) {
     showError((result && result.error) || 'No result returned.');
     return;
@@ -91,8 +91,17 @@ function renderDirectResult(result, segment, warnings = [], query_text = '') {
   const arrow = isUp ? '▲' : '▼';
   const sign = isUp ? '+' : '';
 
-  // MAIN ANALYSIS (shown directly, not in tabs)
+  // MAIN ANALYSIS - Graph FIRST, then analysis below
   let html = '';
+
+  // ─────────────────────────────────────────────────────────
+  // 1. GRAPH ON TOP (immediately loaded, no lazy-loading)
+  // ─────────────────────────────────────────────────────────
+  html += `<div id="graphContainer" style="margin-bottom:32px;"></div>`;
+
+  // ─────────────────────────────────────────────────────────
+  // 2. ANALYSIS BELOW
+  // ─────────────────────────────────────────────────────────
 
   if (query_text) {
     html += `<div class="card" style="background:var(--surface2);border-color:var(--accent);margin-bottom:16px;">
@@ -151,59 +160,24 @@ function renderDirectResult(result, segment, warnings = [], query_text = '') {
     </div>`;
   }
 
-  // Bottom tabs for additional exploration
-  html += `
-    <div style="margin-top:24px;border-top:2px solid var(--border);padding-top:16px;">
-      <div class="tabs">
-        <button class="tab-btn active" onclick="switchTab(this,'tab-graph')">📊 Graph Explorer</button>
-        <button class="tab-btn" onclick="switchTab(this,'tab-drivers')">🔗 Causal Chain Map</button>
-        <button class="tab-btn" onclick="switchTab(this,'tab-events')">📌 Business Events</button>
-      </div>
-
-      <!-- Tab: Graph Explorer (lazy-loaded) -->
-      <div id="tab-graph" class="tab-panel active">
-        <div class="card">
-          <div class="card-title">Metric Relationship Graph</div>
-          <div style="color:var(--muted);font-size:12px;margin-bottom:12px;">
-            Visual representation of how metrics relate to each other. Drag to explore dependencies.
-          </div>
-          <div id="graphContainer"><div class="loading"><div class="spinner"></div>Loading graph…</div></div>
-        </div>
-      </div>
-
-      <!-- Tab: Causal Chain -->
-      <div id="tab-drivers" class="tab-panel">
-        <div class="card">
-          <div class="card-title">Full Causal Chain (Hierarchical View)</div>
-          <div style="color:var(--muted);font-size:12px;margin-bottom:12px;">
-            Expanded view showing the complete causal decomposition (up to 3 levels deep)
-          </div>
-          <div class="driver-list">
-            ${allDrivers.map((d, i) => renderDriverCard(d, i, ch.absolute, true)).join('')}
-          </div>
-        </div>
-      </div>
-
-      <!-- Tab: Business Events -->
-      <div id="tab-events" class="tab-panel">
-        <div class="card">
-          <div class="card-title">Business Events in ${escHtml(qm.period || '')}</div>
-          ${(result.period_events || []).length
-            ? `<div class="events-list">${(result.period_events || []).map(renderEvent).join('')}</div>`
-            : `<div style="color:var(--muted);font-size:13px;padding:12px;">No specific business events recorded for this period.</div>`
-          }
-        </div>
-      </div>
-    </div>
-  `;
+  // Business Events section (no tab, always visible)
+  if (result.period_events && result.period_events.length > 0) {
+    html += `<div class="card" style="margin-bottom:16px;">
+      <div class="card-title">📌 Business Events in ${escHtml(qm.period || '')}</div>
+      <div class="events-list">${result.period_events.map(renderEvent).join('')}</div>
+    </div>`;
+  }
 
   showContent(html);
 
-  // Lazy-load graph when that tab is first clicked
-  const graphBtn = document.querySelector('[onclick*="tab-graph"]');
-  if (graphBtn) {
-    graphBtn.addEventListener('click', loadGraphExplorer, { once: true });
-  }
+  // Load graph immediately after content is set
+  await loadGraphExplorerEmbedded();
+}
+
+// ─────────────────────────────────────────────────────────
+// New: Load graph embedded in main view (not in a tab)
+// ─────────────────────────────────────────────────────────
+async function loadGraphExplorerEmbedded() {
 }
 
 function renderDriverCard(driver, idx, totalChange, showSubDrivers = false) {
@@ -386,15 +360,15 @@ function renderSegmentBreakdown(result, warnings) {
   `);
 }
 
-async function loadGraphExplorer() {
-  showLoading('Loading graph...');
+async function loadGraphExplorerEmbedded() {
+  const container = document.getElementById('graphContainer');
+  if (!container) return;
+  container.innerHTML = '<div class="loading"><div class="spinner"></div><span>Loading graph…</span></div>';
+  
   try {
     const data = await apiFetch('/api/graph');
     const nodes = data.nodes || [];
     const edges = data.edges || [];
-    
-    const container = document.createElement('div');
-    container.id = 'graphContainer';
 
     // Create hierarchical layout
     const nodePositions = {};
@@ -470,8 +444,10 @@ async function loadGraphExplorer() {
       `;
     }).join('');
 
-    const graphHTML = `
-      <div class="graph-legend">
+    const graphHtml = `
+      <div class="card" style="margin-bottom:24px;">
+        <div class="card-title">📊 Metric Relationship Graph</div>
+        <div class="graph-legend">
         <div class="legend-item"><div class="legend-dot" style="background:var(--yellow)"></div>Base (input) metric</div>
         <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Derived metric</div>
         <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Positive causal driver</div>
@@ -504,14 +480,13 @@ async function loadGraphExplorer() {
         <strong style="color:var(--accent)">Layer 5 (Blue, rightmost):</strong> Final outcome — <strong>Revenue</strong> (the ultimate business metric)<br/>
         <strong style="color:var(--green)">Green lines:</strong> Positive relationships | <strong style="color:var(--red)">Red lines:</strong> Negative relationships | <strong>Thicker lines:</strong> Formula dependencies (mathematical)
       </div>
-      <div id="nodeDetail" style="margin-top:16px;"></div>
-    `;
+    </div>`;
 
     // Store for use in showNodeDetail
     window._graphData = { nodes, edges };
-    showContent(graphHTML);
+    container.innerHTML = graphHtml;
   } catch (e) {
-    showError('Failed to load graph: ' + e.message);
+    container.innerHTML = `<div class="error-banner">Failed to load graph: ${escHtml(e.message)}</div>`;
   }
 }
 
