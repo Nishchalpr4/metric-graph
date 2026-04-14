@@ -2,12 +2,11 @@
    Causal Financial Knowledge Graph — Frontend Logic
    ============================================================ */
 
-// UPDATE THIS FOR PRODUCTION:
-// - Local dev: 'http://127.0.0.1:8001'
-// - Render: 'https://your-backend-name.onrender.com'
-// - Google Cloud Run: 'https://your-service-xxxxxx.run.app'
-// - Railway: 'https://your-app-xxxxx.railway.app'
-const API = 'http://127.0.0.1:8001';  // FastAPI backend URL
+// CHANGE THIS to your deployed backend URL:
+// Render example: https://metric-graph-xxxxx.onrender.com
+const API = typeof window !== 'undefined' && window.location.hostname !== 'localhost' 
+  ? window.location.origin.replace('pages.dev', 'onrender.com')  // Auto-detect if on Cloudflare
+  : 'http://127.0.0.1:8001';  // Local dev
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap
