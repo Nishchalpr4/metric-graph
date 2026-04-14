@@ -370,9 +370,11 @@ async function loadGraphExplorerEmbedded() {
     const nodes = data.nodes || [];
     const edges = data.edges || [];
 
-    // Create hierarchical layout
+    // Create hierarchical layout with responsive sizing
     const nodePositions = {};
-    const WIDTH = 1600, HEIGHT = 900;
+    const containerWidth = Math.min(window.innerWidth - 60, 1100);
+    const WIDTH = Math.max(containerWidth, 800);
+    const HEIGHT = 650;
     
     // Categorize nodes by metric type for hierarchy
     const baseMetrics = nodes.filter(n => n.is_base);
@@ -386,22 +388,22 @@ async function loadGraphExplorerEmbedded() {
     // Position base metrics on far left (x=150)
     const baseY = HEIGHT / 2;
     baseMetrics.forEach((n, i) => {
-      const offset = (i - baseMetrics.length / 2) * 80;
-      nodePositions[n.id] = { x: 120, y: baseY + offset };
+      const offset = (i - baseMetrics.length / 2) * 70;
+      nodePositions[n.id] = { x: WIDTH * 0.06, y: baseY + offset };
     });
 
     // Position operational derived in left-center (x=450)
     const opY = HEIGHT / 2;
     operationalDerived.forEach((n, i) => {
-      const offset = (i - operationalDerived.length / 2) * 100;
-      nodePositions[n.id] = { x: 450, y: opY + offset };
+      const offset = (i - operationalDerived.length / 2) * 80;
+      nodePositions[n.id] = { x: WIDTH * 0.25, y: opY + offset };
     });
 
     // Position user derived in center (x=700)
     const userY = HEIGHT / 2;
     userDerived.forEach((n, i) => {
-      const offset = (i - userDerived.length / 2) * 100;
-      nodePositions[n.id] = { x: 700, y: userY + offset };
+      const offset = (i - userDerived.length / 2) * 80;
+      nodePositions[n.id] = { x: WIDTH * 0.45, y: userY + offset };
     });
 
     // Position financial derived on right (x=1100, 1350)
@@ -410,13 +412,13 @@ async function loadGraphExplorerEmbedded() {
     
     const fin1Y = HEIGHT / 2;
     finLevel1.forEach((n, i) => {
-      const offset = (i - finLevel1.length / 2) * 100;
-      nodePositions[n.id] = { x: 1100, y: fin1Y + offset };
+      const offset = (i - finLevel1.length / 2) * 80;
+      nodePositions[n.id] = { x: WIDTH * 0.68, y: fin1Y + offset };
     });
 
     finLevel2.forEach((n, i) => {
-      const offset = (i - finLevel2.length / 2) * 100;
-      nodePositions[n.id] = { x: 1350, y: fin1Y + 50 + offset };
+      const offset = (i - finLevel2.length / 2) * 80;
+      nodePositions[n.id] = { x: WIDTH * 0.92, y: fin1Y + offset };
     });
 
     // Draw SVG edges
@@ -425,21 +427,26 @@ async function loadGraphExplorerEmbedded() {
       const t = nodePositions[e.target];
       if (!s || !t) return '';
       const color = e.direction === 'positive' ? '#22c55e' : '#ef4444';
-      const strokeWidth = e.relationship_type === 'formula_dependency' ? 2 : 1.5;
-      return `<line x1="${s.x + 45}" y1="${s.y}" x2="${t.x - 45}" y2="${t.y}" stroke="${color}" stroke-width="${strokeWidth}" opacity="0.5"/>`;
+      const strokeWidth = e.relationship_type === 'formula_dependency' ? 2.5 : 1.5;
+      return `<line x1="${s.x + 38}" y1="${s.y}" x2="${t.x - 38}" y2="${t.y}" stroke="${color}" stroke-width="${strokeWidth}" opacity="0.65" class="graph-edge" stroke-linecap="round"/>`;
     }).join('');
 
-    // Draw SVG nodes with labels
+    // Draw SVG nodes with improved styling
     const svgContent = nodes.map(n => {
       const pos = nodePositions[n.id];
       const displayName = (n.display_name || n.id).length > 18 
         ? (n.display_name || n.id).split(' ').slice(0, 2).join(' ')
         : (n.display_name || n.id);
+      const bgColor = n.is_base ? '#f59e0b' : '#818cf8';
+      const strokeColor = n.is_base ? '#fcd34d' : '#c4b5fd';
       return `
-        <g onclick="showNodeDetail('${n.id}')" style="cursor:pointer;">
-          <rect x="${pos.x - 45}" y="${pos.y - 20}" width="90" height="40" rx="6" fill="${n.is_base ? '#f59e0b' : '#5b6ef5'}" opacity="0.8" stroke="${n.is_base ? '#fcd34d' : '#818cf8'}" stroke-width="2"/>
-          <text x="${pos.x}" y="${pos.y - 4}" text-anchor="middle" font-size="10" font-weight="600" fill="#fff" font-family="Inter, sans-serif">${escHtml(displayName)}</text>
-          <text x="${pos.x}" y="${pos.y + 10}" text-anchor="middle" font-size="8" fill="rgba(255,255,255,0.7)" font-family="Inter, sans-serif">${escHtml(n.unit)}</text>
+        <g onclick="showNodeDetail('${n.id}')" style="cursor:pointer;" class="graph-node">
+          <filter id="shadow-${n.id}" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>
+          </filter>
+          <rect x="${pos.x - 38}" y="${pos.y - 17}" width="76" height="34" rx="6" fill="${bgColor}" opacity="0.88" stroke="${strokeColor}" stroke-width="2.5" filter="url(#shadow-${n.id})" class="node-rect" style="transition:all .2s"/>
+          <text x="${pos.x}" y="${pos.y - 3}" text-anchor="middle" font-size="9" font-weight="700" fill="#fff" font-family="Inter, sans-serif">${escHtml(displayName)}</text>
+          <text x="${pos.x}" y="${pos.y + 9}" text-anchor="middle" font-size="7" fill="rgba(255,255,255,0.85)" font-family="Inter, sans-serif">${escHtml(n.unit)}</text>
         </g>
       `;
     }).join('');
@@ -454,40 +461,78 @@ async function loadGraphExplorerEmbedded() {
         <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>Negative relationship</div>
         <div style="margin-left:auto;font-size:11px;color:var(--muted);">← Base Metrics | Operational | User Metrics | Financial | Revenue →</div>
       </div>
-      <div style="position:relative;width:100%;margin:16px 0;border:1px solid var(--border);border-radius:8px;overflow:auto;background:rgba(15,17,23,.8);">
-        <svg width="${WIDTH}" height="${HEIGHT}" style="display:block;cursor:grab;">
+      <div style="position:relative;width:100%;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:rgba(15,17,23,.95);display:flex;justify-content:center;">
+        <svg width="${WIDTH}" height="${HEIGHT}" style="display:block;cursor:grab;touch-action:none;" id="metricGraph" class="draggable-graph">
           <defs>
             <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
               <polygon points="0 0, 10 3, 0 6" fill="#8892b0"/>
             </marker>
           </defs>
-          <!-- Vertical separator lines for clarity -->
-          <line x1="300" y1="0" x2="300" y2="${HEIGHT}" stroke="rgba(139,146,176,.15)" stroke-width="1" stroke-dasharray="5,5"/>
-          <line x1="600" y1="0" x2="600" y2="${HEIGHT}" stroke="rgba(139,146,176,.15)" stroke-width="1" stroke-dasharray="5,5"/>
-          <line x1="900" y1="0" x2="900" y2="${HEIGHT}" stroke="rgba(139,146,176,.15)" stroke-width="1" stroke-dasharray="5,5"/>
-          <line x1="1200" y1="0" x2="1200" y2="${HEIGHT}" stroke="rgba(139,146,176,.15)" stroke-width="1" stroke-dasharray="5,5"/>
           
           ${edgeSvg}
           ${svgContent}
         </svg>
       </div>
-      <div style="padding:12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);font-size:12px;color:var(--muted);">
-        <strong>📊 Graph Hierarchy (Left → Right):</strong><br/>
-        <strong style="color:var(--yellow)">Layer 1 (Yellow):</strong> Base operational inputs — Orders, AOV, Marketing Spend, etc. (directly measured)<br/>
-        <strong style="color:var(--text)">Layer 2 (Blue):</strong> Operational derived metrics — Basket Size, Order Frequency, Restaurant Partners, etc.<br/>
-        <strong style="color:var(--text)">Layer 3 (Blue):</strong> User metrics — Monthly Active Users, New Users<br/>
-        <strong style="color:var(--accent)">Layer 4 (Blue):</strong> Intermediate financial — GMV, Commission Rate, Delivery Revenue, Take Rate, CAC, ARPU<br/>
-        <strong style="color:var(--accent)">Layer 5 (Blue, rightmost):</strong> Final outcome — <strong>Revenue</strong> (the ultimate business metric)<br/>
-        <strong style="color:var(--green)">Green lines:</strong> Positive relationships | <strong style="color:var(--red)">Red lines:</strong> Negative relationships | <strong>Thicker lines:</strong> Formula dependencies (mathematical)
+      <div style="padding:12px;background:var(--surface2);border-radius:0 0 8px 8px;border:1px solid var(--border);border-top:none;font-size:11px;color:var(--muted);" class="no-select">
+        <strong>💡 Tips:</strong> Drag to pan · Scroll to zoom · Click nodes for details · <strong style="color:var(--green)">Green</strong> = positive impact · <strong style="color:var(--red)">Red</strong> = negative impact
       </div>
     </div>`;
 
     // Store for use in showNodeDetail
     window._graphData = { nodes, edges };
     container.innerHTML = graphHtml;
+    
+    // Add dragging and zooming functionality
+    addGraphDragging();
   } catch (e) {
     container.innerHTML = `<div class="error-banner">Failed to load graph: ${escHtml(e.message)}</div>`;
   }
+}
+
+function addGraphDragging() {
+  const svg = document.getElementById('metricGraph');
+  if (!svg) return;
+
+  let isPanning = false;
+  let startX = 0, startY = 0;
+  let offsetX = 0, offsetY = 0;
+
+  svg.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.graph-node')) return; // Don't pan when clicking nodes
+    isPanning = true;
+    startX = e.clientX;
+    startY = e.clientY;
+  });
+
+  svg.addEventListener('mousemove', (e) => {
+    if (!isPanning) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    offsetX += dx;
+    offsetY += dy;
+    svg.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+    startX = e.clientX;
+    startY = e.clientY;
+  });
+
+  svg.addEventListener('mouseup', () => {
+    isPanning = false;
+  });
+
+  svg.addEventListener('mouseleave', () => {
+    isPanning = false;
+  });
+
+  // Scroll wheel to zoom
+  svg.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    const currentScale = parseFloat(svg.dataset.scale || '1');
+    const newScale = Math.max(0.6, Math.min(2.5, currentScale * zoomFactor));
+    svg.dataset.scale = newScale;
+    svg.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${newScale})`;
+    svg.style.transformOrigin = '50% 50%';
+  }, { passive: false });
 }
 
 function showNodeDetail(nodeId) {
