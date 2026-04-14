@@ -78,107 +78,240 @@ async function renderQueryResult(data, raw_query) {
 }
 
 async function renderDirectResult(result, segment, warnings = [], query_text = '') {
-  if (!result || result.error) {
-    showError((result && result.error) || 'No result returned.');
-    return;
-  }
+  if (!result || result.error) { showError((result && result.error) || 'No result returned.'); return; }
 
-  const qm = result.query_meta || {};
-  const ch = result.change || {};
-  const direction = ch.direction || 'changed';
-  const isUp = direction === 'increased';
-  const pillClass = isUp ? 'up' : 'down';
+  const qm  = result.query_meta || {};
+  const ch  = result.change || {};
+  const isUp = (ch.direction || '') === 'increased';
+  const pill = isUp ? 'up' : 'down';
   const arrow = isUp ? '▲' : '▼';
-  const sign = isUp ? '+' : '';
+  const sign  = isUp ? '+' : '';
 
-  // MAIN ANALYSIS - Graph FIRST, then analysis below
-  let html = '';
+  const warnHtml = (warnings && warnings.length)
+    ? `<div class="error-banner" style="background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.3);color:var(--yellow);font-size:11px;padding:8px 10px;">
+        ${warnings.map(w => `⚠ ${escHtml(w)}`).join('<br/>')}
+      </div>` : '';
 
-  // ─────────────────────────────────────────────────────────
-  // 1. GRAPH ON TOP (immediately loaded, no lazy-loading)
-  // ─────────────────────────────────────────────────────────
-  html += `<div id="graphContainer" style="margin-bottom:32px;"></div>`;
-
-  // ─────────────────────────────────────────────────────────
-  // 2. ANALYSIS BELOW
-  // ─────────────────────────────────────────────────────────
-
-  if (query_text) {
-    html += `<div class="card" style="background:var(--surface2);border-color:var(--accent);margin-bottom:16px;">
-      <div class="card-title">Your Question</div>
-      <div style="font-size:14px;color:var(--text);">"${escHtml(query_text)}"</div>
-    </div>`;
-  }
-
-  if (warnings && warnings.length) {
-    html += `<div class="error-banner" style="background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.3);color:var(--yellow);margin-bottom:12px;">
-      ${warnings.map(w => `⚠ ${escHtml(w)}`).join('<br/>')}
-    </div>`;
-  }
-
-  // Change summary card
-  html += `
-    <div class="card" style="margin-bottom:16px;">
-      <div class="card-title">${escHtml(qm.display_name || qm.metric || 'Metric')}</div>
-      <div class="change-row">
-        <div class="metric-big">${fmtVal(ch.current_value, qm.unit)}</div>
-        <div>
-          <div class="change-pill ${pillClass}">
-            ${arrow} ${sign}${fmtVal(ch.absolute, qm.unit)} &nbsp; (${sign}${(ch.pct || 0).toFixed(1)}%)
-          </div>
-          <div class="vs-label" style="margin-top:4px;">
-            ${escHtml(qm.period)} vs ${escHtml(qm.compare_period)} · ${escHtml(segment || qm.segment || '')}
-          </div>
-        </div>
-        <div style="margin-left:auto;text-align:right;">
-          <div style="color:var(--muted);font-size:11px;">Previous</div>
-          <div style="font-size:18px;font-weight:600;">${fmtVal(ch.prev_value, qm.unit)}</div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  // Executive Summary
-  if (result.summary) {
-    html += `<div class="card" style="margin-bottom:16px;">
-      <div class="card-title" style="color:var(--accent2);">Executive Summary</div>
-      <div class="summary-text" style="line-height:1.8;font-size:14px;">${escHtml(result.summary)}</div>
-    </div>`;
-  }
-
-  // All Drivers with full details
   const allDrivers = result.drivers || [];
-  if (allDrivers.length) {
-    html += `<div class="card" style="margin-bottom:16px;">
-      <div class="card-title" style="color:var(--green);">Root Cause Analysis (All Drivers)</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
-        Complete list of all formula dependencies and causal drivers affecting <strong>${escHtml(qm.display_name)}</strong>
-      </div>
-      <div class="driver-list">
-        ${allDrivers.map((d, i) => renderDriverCard(d, i, ch.absolute, true)).join('')}
-      </div>
-    </div>`;
-  }
 
-  // Business Events section (no tab, always visible)
-  if (result.period_events && result.period_events.length > 0) {
-    html += `<div class="card" style="margin-bottom:16px;">
-      <div class="card-title">📌 Business Events in ${escHtml(qm.period || '')}</div>
+  const driversHtml = allDrivers.length ? `
+    <div class="card" style="padding:10px 12px;">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--green);margin-bottom:8px;">Root Cause Analysis</div>
+      <div class="driver-list">${allDrivers.map((d, i) => renderDriverCard(d, i, ch.absolute, false)).join('')}</div>
+    </div>` : '';
+
+  const eventsHtml = (result.period_events || []).length ? `
+    <div class="card" style="padding:10px 12px;">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--yellow);margin-bottom:8px;">Business Events · ${escHtml(qm.period || '')}</div>
       <div class="events-list">${result.period_events.map(renderEvent).join('')}</div>
+    </div>` : '';
+
+  // Set 2-panel mode — graph LEFT, analysis RIGHT
+  const contentEl = document.getElementById('content');
+  contentEl.classList.add('two-panel-mode');
+  contentEl.innerHTML = `
+    <div class="two-panel">
+      <div class="graph-panel" id="graphPanel">
+        <div class="graph-panel-bar">
+          <span>📊 Metric Graph</span>
+          <span class="graph-legend" style="margin:0;gap:10px;">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--yellow)"></div>Base</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Derived</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>+causal</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>−causal</div>
+          </span>
+          <span style="margin-left:auto;font-size:10px;color:var(--muted);">Drag nodes · scroll to zoom</span>
+        </div>
+        <div class="graph-svg-wrap" id="graphSvgWrap">
+          <div class="loading"><div class="spinner"></div><span>Loading…</span></div>
+        </div>
+        <div id="nodeTooltip" class="node-tooltip"></div>
+      </div>
+
+      <div class="analysis-panel">
+        ${warnHtml}
+        ${query_text ? `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:4px 0 6px;border-bottom:1px solid var(--border);">"${escHtml(query_text)}"</div>` : ''}
+
+        <div class="card" style="padding:12px 14px;">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:6px;">${escHtml(qm.display_name || qm.metric || '')}</div>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <div style="font-size:28px;font-weight:700;">${fmtVal(ch.current_value, qm.unit)}</div>
+            <div>
+              <div class="change-pill ${pill}">${arrow} ${sign}${fmtVal(ch.absolute, qm.unit)} (${sign}${(ch.pct||0).toFixed(1)}%)</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:3px;">${escHtml(qm.period)} vs ${escHtml(qm.compare_period)} · ${escHtml(segment || qm.segment || '')}</div>
+            </div>
+            <div style="margin-left:auto;text-align:right;">
+              <div style="font-size:10px;color:var(--muted);">Prev</div>
+              <div style="font-size:18px;font-weight:600;">${fmtVal(ch.prev_value, qm.unit)}</div>
+            </div>
+          </div>
+        </div>
+
+        ${result.summary ? `<div style="font-size:12px;line-height:1.65;color:var(--text);border-left:3px solid var(--accent);padding:6px 10px;background:var(--surface);border-radius:0 6px 6px 0;">${escHtml(result.summary)}</div>` : ''}
+
+        ${driversHtml}
+        ${eventsHtml}
+      </div>
     </div>`;
+
+  await loadGraphInPanel(result, qm);
+}
+
+
+  // Load graph into left panel
+  await loadGraphInPanel();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Graph: load into left panel with fully draggable nodes
+// ─────────────────────────────────────────────────────────────────────────────
+async function loadGraphInPanel() {
+  const wrap = document.getElementById('graphSvgWrap');
+  if (!wrap) return;
+  try {
+    const data = await apiFetch('/api/graph');
+    const nodes = data.nodes || [];
+    const edges = data.edges || [];
+
+    const W = wrap.clientWidth  || 600;
+    const H = wrap.clientHeight || 500;
+
+    const base   = nodes.filter(n => n.is_base);
+    const der    = nodes.filter(n => !n.is_base);
+    const opDer  = der.filter(n => n.category === 'Operational');
+    const usDer  = der.filter(n => n.category === 'User');
+    const finDer = der.filter(n => n.category === 'Financial');
+    const finMain = finDer.filter(n => n.id !== 'revenue');
+    const finTop  = finDer.filter(n => n.id === 'revenue');
+
+    const pos = {};
+    const mid = H / 2;
+    const sp  = 58; // vertical spacing between nodes
+
+    const place = (list, xFrac) => list.forEach((n, i) => {
+      pos[n.id] = {
+        x: Math.round(W * xFrac),
+        y: Math.round(mid + (i - (list.length - 1) / 2) * sp)
+      };
+    });
+    place(base,    0.07);
+    place(opDer,   0.27);
+    place(usDer,   0.47);
+    place(finMain, 0.68);
+    place(finTop,  0.91);
+
+    // Edges (behind nodes)
+    const edgesSvg = edges.map(e => {
+      const s = pos[e.source], t = pos[e.target];
+      if (!s || !t) return '';
+      const col = e.direction === 'positive' ? '#22c55e' : '#ef4444';
+      const sw  = e.relationship_type === 'formula_dependency' ? 2.5 : 1.5;
+      return `<line id="edge_${e.source}_${e.target}" x1="${s.x+36}" y1="${s.y}" x2="${t.x-36}" y2="${t.y}" stroke="${col}" stroke-width="${sw}" opacity="0.55" stroke-linecap="round"/>`;
+    }).join('');
+
+    // Nodes (in front)
+    const nodesSvg = nodes.map(n => {
+      const p = pos[n.id];
+      if (!p) return '';
+      const label  = (n.display_name || n.id).split(' ').slice(0, 2).join(' ');
+      const fill   = n.is_base ? '#f59e0b' : '#818cf8';
+      const stroke = n.is_base ? '#fcd34d' : '#c4b5fd';
+      return `<g id="node_${n.id}" class="draggable-node" data-nodeid="${n.id}"
+                 transform="translate(${p.x},${p.y})" style="cursor:grab;">
+        <rect x="-36" y="-15" width="72" height="30" rx="6"
+              fill="${fill}" opacity="0.9" stroke="${stroke}" stroke-width="2"/>
+        <text y="-3" text-anchor="middle" font-size="8.5" font-weight="700" fill="#fff"
+              font-family="Inter,sans-serif" pointer-events="none">${escHtml(label)}</text>
+        <text y="8" text-anchor="middle" font-size="6.5" fill="rgba(255,255,255,0.8)"
+              font-family="Inter,sans-serif" pointer-events="none">${escHtml(n.unit)}</text>
+      </g>`;
+    }).join('');
+
+    wrap.innerHTML = `<svg id="metricSvg" width="${W}" height="${H}"
+        style="display:block;width:100%;height:100%;">
+      <g id="viewport">
+        <g id="edgeLayer">${edgesSvg}</g>
+        <g id="nodeLayer">${nodesSvg}</g>
+      </g>
+    </svg>`;
+
+    window._graphData = { nodes, edges };
+    window._nodePos   = pos;
+    initDraggableGraph(document.getElementById('metricSvg'), pos, edges, nodes);
+  } catch (e) {
+    wrap.innerHTML = `<div class="error-banner" style="margin:16px;">Failed to load graph: ${escHtml(e.message)}</div>`;
   }
-
-  showContent(html);
-
-  // Load graph immediately after content is set
-  await loadGraphExplorerEmbedded();
 }
 
-// ─────────────────────────────────────────────────────────
-// New: Load graph embedded in main view (not in a tab)
-// ─────────────────────────────────────────────────────────
-async function loadGraphExplorerEmbedded() {
+function initDraggableGraph(svg, pos, edges, nodes) {
+  let drag = null, sx = 0, sy = 0, nx = 0, ny = 0, scale = 1;
+  const vp = svg.querySelector('#viewport');
+
+  svg.addEventListener('mousedown', e => {
+    const g = e.target.closest('.draggable-node');
+    if (!g) return;
+    e.preventDefault();
+    drag = g.dataset.nodeid;
+    sx = e.clientX; sy = e.clientY;
+    nx = pos[drag].x; ny = pos[drag].y;
+  });
+
+  svg.addEventListener('mousemove', e => {
+    if (!drag) return;
+    const x = nx + (e.clientX - sx) / scale;
+    const y = ny + (e.clientY - sy) / scale;
+    pos[drag] = { x, y };
+
+    const gEl = svg.querySelector(`#node_${drag}`);
+    if (gEl) gEl.setAttribute('transform', `translate(${x},${y})`);
+
+    edges.forEach(ed => {
+      const ln = svg.querySelector(`#edge_${ed.source}_${ed.target}`);
+      if (!ln) return;
+      if (ed.source === drag) { ln.setAttribute('x1', x + 36); ln.setAttribute('y1', y); }
+      if (ed.target === drag) { ln.setAttribute('x2', x - 36); ln.setAttribute('y2', y); }
+    });
+  });
+
+  svg.addEventListener('mouseup',   () => { drag = null; });
+  svg.addEventListener('mouseleave',() => { drag = null; });
+
+  // Scroll to zoom
+  svg.addEventListener('wheel', e => {
+    e.preventDefault();
+    scale = Math.max(0.3, Math.min(3, scale * (e.deltaY > 0 ? 0.9 : 1.1)));
+    if (vp) vp.setAttribute('transform', `scale(${scale})`);
+  }, { passive: false });
+
+  // Click → tooltip
+  svg.addEventListener('click', e => {
+    if (drag) return;
+    const g   = e.target.closest('.draggable-node');
+    const tip = document.getElementById('nodeTooltip');
+    if (!g) { if (tip) tip.style.display = 'none'; return; }
+    const nid  = g.dataset.nodeid;
+    const node = nodes.find(n => n.id === nid);
+    if (!node || !tip) return;
+    const ins  = edges.filter(ed => ed.target === nid);
+    const outs = edges.filter(ed => ed.source === nid);
+    tip.style.display = 'block';
+    tip.style.pointerEvents = 'all';
+    tip.innerHTML = `
+      <button onclick="document.getElementById('nodeTooltip').style.display='none'"
+              style="float:right;background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;">×</button>
+      <div style="font-weight:700;color:var(--text);margin-bottom:3px;font-size:13px;">${escHtml(node.display_name)}</div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:6px;">${escHtml(node.unit)} · ${escHtml(node.category)}</div>
+      ${ins.length ? `<div style="font-size:10px;color:var(--yellow);">← inputs: ${ins.map(ed => escHtml(ed.source)).join(', ')}</div>` : ''}
+      ${outs.length ? `<div style="font-size:10px;color:var(--accent2);margin-top:2px;">→ drives: ${outs.map(ed => escHtml(ed.target)).join(', ')}</div>` : ''}
+      ${node.description ? `<div style="font-size:10px;color:var(--muted);margin-top:4px;">${escHtml(node.description)}</div>` : ''}`;
+    const rect = svg.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    tip.style.left = `${Math.min(cx + 10, rect.width  - 250)}px`;
+    tip.style.top  = `${Math.max(cy - 40, 8)}px`;
+  });
 }
+
+
 
 function renderDriverCard(driver, idx, totalChange, showSubDrivers = false) {
   const isFormula = driver.relationship_type === 'formula_dependency';
@@ -360,225 +493,15 @@ function renderSegmentBreakdown(result, warnings) {
   `);
 }
 
+}
+
 async function loadGraphExplorerEmbedded() {
-  const container = document.getElementById('graphContainer');
-  if (!container) return;
-  container.innerHTML = '<div class="loading"><div class="spinner"></div><span>Loading graph…</span></div>';
-  
-  try {
-    const data = await apiFetch('/api/graph');
-    const nodes = data.nodes || [];
-    const edges = data.edges || [];
-
-    // Create hierarchical layout with responsive sizing
-    const nodePositions = {};
-    const containerWidth = Math.min(window.innerWidth - 60, 1100);
-    const WIDTH = Math.max(containerWidth, 800);
-    const HEIGHT = 650;
-    
-    // Categorize nodes by metric type for hierarchy
-    const baseMetrics = nodes.filter(n => n.is_base);
-    const derivedMetrics = nodes.filter(n => !n.is_base);
-    
-    // Further sub-categorize derived metrics
-    const operationalDerived = derivedMetrics.filter(n => n.category === 'Operational');
-    const financialDerived = derivedMetrics.filter(n => n.category === 'Financial');
-    const userDerived = derivedMetrics.filter(n => n.category === 'User');
-
-    // Position base metrics on far left (x=150)
-    const baseY = HEIGHT / 2;
-    baseMetrics.forEach((n, i) => {
-      const offset = (i - baseMetrics.length / 2) * 70;
-      nodePositions[n.id] = { x: WIDTH * 0.06, y: baseY + offset };
-    });
-
-    // Position operational derived in left-center (x=450)
-    const opY = HEIGHT / 2;
-    operationalDerived.forEach((n, i) => {
-      const offset = (i - operationalDerived.length / 2) * 80;
-      nodePositions[n.id] = { x: WIDTH * 0.25, y: opY + offset };
-    });
-
-    // Position user derived in center (x=700)
-    const userY = HEIGHT / 2;
-    userDerived.forEach((n, i) => {
-      const offset = (i - userDerived.length / 2) * 80;
-      nodePositions[n.id] = { x: WIDTH * 0.45, y: userY + offset };
-    });
-
-    // Position financial derived on right (x=1100, 1350)
-    const finLevel1 = financialDerived.filter(m => ['gmv', 'take_rate', 'arpu', 'cac', 'delivery_charges', 'commission_rate'].includes(m.id));
-    const finLevel2 = financialDerived.filter(m => ['revenue'].includes(m.id));
-    
-    const fin1Y = HEIGHT / 2;
-    finLevel1.forEach((n, i) => {
-      const offset = (i - finLevel1.length / 2) * 80;
-      nodePositions[n.id] = { x: WIDTH * 0.68, y: fin1Y + offset };
-    });
-
-    finLevel2.forEach((n, i) => {
-      const offset = (i - finLevel2.length / 2) * 80;
-      nodePositions[n.id] = { x: WIDTH * 0.92, y: fin1Y + offset };
-    });
-
-    // Draw SVG edges
-    const edgeSvg = edges.map(e => {
-      const s = nodePositions[e.source];
-      const t = nodePositions[e.target];
-      if (!s || !t) return '';
-      const color = e.direction === 'positive' ? '#22c55e' : '#ef4444';
-      const strokeWidth = e.relationship_type === 'formula_dependency' ? 2.5 : 1.5;
-      return `<line x1="${s.x + 38}" y1="${s.y}" x2="${t.x - 38}" y2="${t.y}" stroke="${color}" stroke-width="${strokeWidth}" opacity="0.65" class="graph-edge" stroke-linecap="round"/>`;
-    }).join('');
-
-    // Draw SVG nodes with improved styling
-    const svgContent = nodes.map(n => {
-      const pos = nodePositions[n.id];
-      const displayName = (n.display_name || n.id).length > 18 
-        ? (n.display_name || n.id).split(' ').slice(0, 2).join(' ')
-        : (n.display_name || n.id);
-      const bgColor = n.is_base ? '#f59e0b' : '#818cf8';
-      const strokeColor = n.is_base ? '#fcd34d' : '#c4b5fd';
-      return `
-        <g onclick="showNodeDetail('${n.id}')" style="cursor:pointer;" class="graph-node">
-          <filter id="shadow-${n.id}" x="-50%" y="-50%" width="200%" height="200%">
-            <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>
-          </filter>
-          <rect x="${pos.x - 38}" y="${pos.y - 17}" width="76" height="34" rx="6" fill="${bgColor}" opacity="0.88" stroke="${strokeColor}" stroke-width="2.5" filter="url(#shadow-${n.id})" class="node-rect" style="transition:all .2s"/>
-          <text x="${pos.x}" y="${pos.y - 3}" text-anchor="middle" font-size="9" font-weight="700" fill="#fff" font-family="Inter, sans-serif">${escHtml(displayName)}</text>
-          <text x="${pos.x}" y="${pos.y + 9}" text-anchor="middle" font-size="7" fill="rgba(255,255,255,0.85)" font-family="Inter, sans-serif">${escHtml(n.unit)}</text>
-        </g>
-      `;
-    }).join('');
-
-    const graphHtml = `
-      <div class="card" style="margin-bottom:24px;">
-        <div class="card-title">📊 Metric Relationship Graph</div>
-        <div class="graph-legend">
-        <div class="legend-item"><div class="legend-dot" style="background:var(--yellow)"></div>Base (input) metric</div>
-        <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Derived metric</div>
-        <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Positive causal driver</div>
-        <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>Negative relationship</div>
-        <div style="margin-left:auto;font-size:11px;color:var(--muted);">← Base Metrics | Operational | User Metrics | Financial | Revenue →</div>
-      </div>
-      <div style="position:relative;width:100%;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:rgba(15,17,23,.95);display:flex;justify-content:center;">
-        <svg width="${WIDTH}" height="${HEIGHT}" style="display:block;cursor:grab;touch-action:none;" id="metricGraph" class="draggable-graph">
-          <defs>
-            <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-              <polygon points="0 0, 10 3, 0 6" fill="#8892b0"/>
-            </marker>
-          </defs>
-          
-          ${edgeSvg}
-          ${svgContent}
-        </svg>
-      </div>
-      <div style="padding:12px;background:var(--surface2);border-radius:0 0 8px 8px;border:1px solid var(--border);border-top:none;font-size:11px;color:var(--muted);" class="no-select">
-        <strong>💡 Tips:</strong> Drag to pan · Scroll to zoom · Click nodes for details · <strong style="color:var(--green)">Green</strong> = positive impact · <strong style="color:var(--red)">Red</strong> = negative impact
-      </div>
-    </div>`;
-
-    // Store for use in showNodeDetail
-    window._graphData = { nodes, edges };
-    container.innerHTML = graphHtml;
-    
-    // Add dragging and zooming functionality
-    addGraphDragging();
-  } catch (e) {
-    container.innerHTML = `<div class="error-banner">Failed to load graph: ${escHtml(e.message)}</div>`;
-  }
-}
-
-function addGraphDragging() {
-  const svg = document.getElementById('metricGraph');
-  if (!svg) return;
-
-  let isPanning = false;
-  let startX = 0, startY = 0;
-  let offsetX = 0, offsetY = 0;
-
-  svg.addEventListener('mousedown', (e) => {
-    if (e.target.closest('.graph-node')) return; // Don't pan when clicking nodes
-    isPanning = true;
-    startX = e.clientX;
-    startY = e.clientY;
-  });
-
-  svg.addEventListener('mousemove', (e) => {
-    if (!isPanning) return;
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-    offsetX += dx;
-    offsetY += dy;
-    svg.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
-    startX = e.clientX;
-    startY = e.clientY;
-  });
-
-  svg.addEventListener('mouseup', () => {
-    isPanning = false;
-  });
-
-  svg.addEventListener('mouseleave', () => {
-    isPanning = false;
-  });
-
-  // Scroll wheel to zoom
-  svg.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-    const currentScale = parseFloat(svg.dataset.scale || '1');
-    const newScale = Math.max(0.6, Math.min(2.5, currentScale * zoomFactor));
-    svg.dataset.scale = newScale;
-    svg.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${newScale})`;
-    svg.style.transformOrigin = '50% 50%';
-  }, { passive: false });
-}
-
-function showNodeDetail(nodeId) {
-  const g = window._graphData;
-  if (!g) return;
-  const node = g.nodes.find(n => n.id === nodeId);
-  if (!node) return;
-
-  const outgoing = g.edges.filter(e => e.source === nodeId);
-  const incoming = g.edges.filter(e => e.target === nodeId);
-
-  const edgeRow = e => {
-    const isPos = e.direction === 'positive';
-    const typeClass = e.relationship_type === 'formula_dependency' ? 'badge-formula' : 'badge-causal';
-    const typeName = e.relationship_type === 'formula_dependency' ? 'formula' : 'causal';
-    return `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">
-      <span class="driver-type-badge ${typeClass}">${typeName}</span>
-      <span style="margin-left:8px;color:${isPos ? 'var(--green)' : 'var(--red)'}">
-        ${isPos ? '▲' : '▼'} ${isPos ? 'positive' : 'negative'}
-      </span>
-      <span style="margin-left:8px;color:var(--muted)">${escHtml(e.source)} → ${escHtml(e.target)}</span>
-      <div style="color:var(--muted);margin-top:2px;">${escHtml(e.explanation || '')}</div>
-    </div>`;
-  };
-
-  document.getElementById('nodeDetail').innerHTML = `
-    <div class="card" style="border-color:var(--accent)">
-      <div class="card-title">${escHtml(node.display_name || nodeId)}</div>
-      <div style="color:var(--muted);font-size:12px;margin-bottom:10px;">${escHtml(node.description || '')}</div>
-      ${incoming.length ? `<div style="font-size:11px;color:var(--muted);margin-bottom:4px;">INPUTS (${incoming.length})</div>${incoming.map(edgeRow).join('')}` : ''}
-      ${outgoing.length ? `<div style="font-size:11px;color:var(--muted);margin-top:10px;margin-bottom:4px;">DRIVES (${outgoing.length})</div>${outgoing.map(edgeRow).join('')}` : ''}
-    </div>
-  `;
+  await loadGraphInPanel();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UI Utilities
 // ─────────────────────────────────────────────────────────────────────────────
-
-function switchTab(btn, panelId) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-  btn.classList.add('active');
-  const panel = document.getElementById(panelId);
-  if (panel) panel.classList.add('active');
-}
 
 function toggleDriver(id) {
   const body = document.getElementById(id);
@@ -589,7 +512,9 @@ function toggleDriver(id) {
 }
 
 function showLoading(msg = 'Analysing…') {
-  document.getElementById('content').innerHTML = `
+  const el = document.getElementById('content');
+  el.classList.remove('two-panel-mode');
+  el.innerHTML = `
     <div class="loading">
       <div class="spinner"></div>
       <span>${escHtml(msg)}</span>
@@ -597,13 +522,17 @@ function showLoading(msg = 'Analysing…') {
 }
 
 function showError(msg) {
-  document.getElementById('content').innerHTML = `
-    <div class="error-banner">Error: ${escHtml(msg)}</div>`;
+  const el = document.getElementById('content');
+  el.classList.remove('two-panel-mode');
+  el.innerHTML = `<div class="error-banner" style="margin:24px;">Error: ${escHtml(msg)}</div>`;
 }
 
 function showContent(html) {
-  document.getElementById('content').innerHTML = html;
+  const el = document.getElementById('content');
+  el.classList.remove('two-panel-mode');
+  el.innerHTML = html;
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Formatting

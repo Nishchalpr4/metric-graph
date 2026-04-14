@@ -132,6 +132,67 @@ header .subtitle { color: var(--muted); font-size: 12px; }
   flex-direction: column;
   gap: 20px;
 }
+/* Override when in two-panel mode */
+.content.two-panel-mode {
+  padding: 0;
+  overflow: hidden;
+  gap: 0;
+}
+
+/* ── Two-panel layout ────────────────────────────────────── */
+.two-panel {
+  display: grid;
+  grid-template-columns: 55% 45%;
+  height: 100%;
+  overflow: hidden;
+}
+.graph-panel {
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: #080b12;
+  position: relative;
+}
+.graph-panel-bar {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.graph-svg-wrap {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+.node-tooltip {
+  position: absolute;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  max-width: 240px;
+  z-index: 20;
+  box-shadow: var(--shadow);
+  display: none;
+  pointer-events: all;
+}
+.analysis-panel {
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 
 .greeting {
   text-align: center;
