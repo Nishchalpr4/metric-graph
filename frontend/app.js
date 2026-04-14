@@ -2,7 +2,12 @@
    Causal Financial Knowledge Graph — Frontend Logic
    ============================================================ */
 
-const API = 'http://127.0.0.1:8001';  // FastAPI backend
+// UPDATE THIS FOR PRODUCTION:
+// - Local dev: 'http://127.0.0.1:8001'
+// - Render: 'https://your-backend-name.onrender.com'
+// - Google Cloud Run: 'https://your-service-xxxxxx.run.app'
+// - Railway: 'https://your-app-xxxxx.railway.app'
+const API = 'http://127.0.0.1:8001';  // FastAPI backend URL
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap

@@ -1,26 +1,93 @@
 # 🚀 Deployment Guide
 
-**Note:** Vercel has limited support for FastAPI. We recommend **Railway** or **Render** instead.
+**Best free hosting:** Cloudflare Pages (frontend) + Render.com or Google Cloud Run (backend)
 
 ---
 
-## ⭐ Option 1: Railway (RECOMMENDED)
+## ⭐ Option 1: Cloudflare Pages (Frontend) + Render.com Free (Backend) 
 
-Railway is **Python-friendly**, requires minimal config, and has generous free tier.
+**COMPLETELY FREE** ✨
+
+### A. Deploy Frontend to Cloudflare Pages (FREE)
+
+1. **Sign up** → https://dash.cloudflare.com
+2. **Pages** → Create project → Connect Git → Select repo
+3. **Build settings:**
+   - Framework: None (static site)
+   - Build command: `echo "No build needed"`
+   - Build output directory: `frontend`
+4. **Environment variables:**
+   - Name: `API_URL`
+   - Value: Your Render backend URL (from step B below)
+5. **Deploy!** → Instantly live, CDN cached globally
+
+### B. Deploy Backend to Render.com (FREE)
+
+1. **Sign up** → https://render.com
+2. **New Web Service** → Connect GitHub → Select repo
+3. **Settings:**
+   - **Name:** any name
+   - **Region:** Oregon (closest/fastest)
+   - **Build:** `pip install -r backend/requirements.txt`
+   - **Start:** `cd backend && gunicorn -w 4 -b 0.0.0.0:$PORT -k uvicorn.workers.UvicornWorker app.main:app`
+4. **Add environment variable:**
+   - `DATABASE_URL` = your Neon connection string
+5. **Deploy!** → ⚠️ **Note:** Free tier sleeps after 15 mins, wakes on request
+
+### C. Update Frontend API URL
+
+Edit `frontend/app.js` line 1:
+```javascript
+// OLD:
+const API = 'http://127.0.0.1:8001';
+
+// NEW (replace with your Render URL):
+const API = 'https://your-backend-name.onrender.com';
+```
+
+---
+
+## Option 2: Google Cloud Run (FREE, No Sleep!)
+
+Better than Render free tier - **doesn't sleep**, first 2M requests/month FREE.
+
+### Steps:
+
+1. **Sign up** → https://cloud.google.com/run
+2. **Create Service** → Deploy container
+3. **Build from source:**
+   ```bash
+   gcloud run deploy metric-graph \
+     --source . \
+     --platform managed \
+     --region us-central1 \
+     --allow-unauthenticated \
+     --memory 512Mi
+   ```
+4. **Set environment variable:**
+   - `DATABASE_URL` = your Neon connection string
+5. **Done!** → Your backend URL appears
+
+**Frontend:** Still use Cloudflare Pages (same steps as Option 1A)
+
+---
+
+## Option 3: Railway (if trial renews)
+
+Railway is **Python-friendly**, requires minimal config, has paid tier.
 
 ### Steps:
 
 1. **Sign up** → https://railway.app
 2. **Connect GitHub repo**
 3. **Railway auto-detects FastAPI** from:
-   - `requirements.txt` (root or backend/)
-   - `Procfile` (defines start command)
+   - `requirements.txt`
+   - `Procfile`
 4. **Add environment variable:**
-   - Go to Project Settings → Variables
-   - Add: `DATABASE_URL` = your Neon connection string
-5. **Deploy** → Railway automatically builds and deploys (~2 min)
+   - `DATABASE_URL` = your Neon connection string
+5. **Deploy** → Automatic (~2 min)
 
-**That's it!** No config files needed. Railway handles everything.
+**Cost:** Paid starting after trial ends (~$5-20/month depending on usage)
 
 ---
 
