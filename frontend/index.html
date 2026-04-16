@@ -25,6 +25,13 @@
     <!-- ── Sidebar ───────────────────────────────────────────────── -->
     <aside class="sidebar">
 
+      <!-- Neon Database Sync -->
+      <div class="search-box">
+        <label>Sync from Neon Database</label>
+        <textarea id="neonConnStr" placeholder="postgresql://user:password@ep-xyz.neon.tech/dbname" rows="2"></textarea>
+        <button class="btn btn-outline" onclick="syncFromNeon()">🔗 Sync Data</button>
+      </div>
+
       <!-- Natural Language Query -->
       <div class="search-box">
         <label>Ask a question</label>

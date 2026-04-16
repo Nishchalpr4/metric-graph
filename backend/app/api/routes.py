@@ -2,25 +2,29 @@
 REST API Routes
 
 Endpoints:
-  POST /api/query          ← NL query → full causal analysis
-  GET  /api/metrics        ← list all metric definitions
-  GET  /api/metric/{name}  ← single metric metadata + all time-series
-  GET  /api/graph          ← full graph (nodes + edges) for visualisation
-  GET  /api/periods        ← list available periods
-  GET  /api/segments       ← list available segments
-  POST /api/seed           ← (re)seed the database
-  GET  /api/health         ← liveness check
-  GET  /api/suggestions    ← sample queries for the UI
+  POST /api/query           ← NL query → full causal analysis
+  GET  /api/metrics         ← list all metric definitions
+  GET  /api/metric/{name}   ← single metric metadata + all time-series
+  GET  /api/graph           ← full graph (nodes + edges) for visualisation
+  GET  /api/periods         ← list available periods
+  GET  /api/segments        ← list available segments
+  POST /api/sync-from-neon  ← sync metric data from Neon PostgreSQL
+  POST /api/import-csv      ← import metric data from CSV file
+  POST /api/seed            ← (re)seed the database with demo data
+  GET  /api/health          ← liveness check
+  GET  /api/suggestions     ← sample queries for the UI
 """
 
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..data.importer import import_metrics_from_csv
+from ..data.postgres_source import NeonDataSource
 from ..graph.builder import build_graph, graph_to_dict
 from ..graph.inference import analyse
 from ..metrics.registry import METRIC_REGISTRY, ALL_PERIODS
@@ -59,6 +63,11 @@ class DirectAnalysisRequest(BaseModel):
     period: str
     compare_period: str
     segment: str = "Food Delivery"
+
+
+class NeonSyncRequest(BaseModel):
+    neon_connection_string: str
+    clear_existing: bool = False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -208,4 +217,163 @@ def seed_database(db: Session = Depends(get_db)):
         return {"status": "success", "inserted": counts}
     except Exception as exc:
         log.exception("Seed error")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/import-csv")
+async def import_csv(file: UploadFile = File(...), clear: bool = False, db: Session = Depends(get_db)):
+    """
+    Import metric time-series data from CSV file.
+    
+    CSV Format (comma-separated, with header):
+        metric_name,period,segment,value
+        orders,Q1 2022,Food Delivery,85.0
+        aov,Q1 2022,Food Delivery,295.0
+    
+    Query Parameters:
+        clear: If true, delete existing data before import (default: false)
+    """
+    try:
+        if not file.filename.endswith('.csv'):
+            raise HTTPException(status_code=400, detail="File must be a CSV file (.csv)")
+        
+        content = await file.read()
+        csv_str = content.decode('utf-8')
+        
+        result = import_metrics_from_csv(csv_str, db, clear_existing=clear)
+        
+        if result.get("error_count", 0) > 0:
+            result["warning"] = f"{result['error_count']} rows had errors"
+        
+        _invalidate_graph()
+        return result
+    
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.exception("CSV import error")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/sync-from-neon")
+def sync_from_neon(req: NeonSyncRequest, db: Session = Depends(get_db)):
+    """
+    Sync metric data from Neon PostgreSQL database to local database.
+    
+    Request body:
+        {
+            "neon_connection_string": "postgresql://user:password@host/dbname",
+            "clear_existing": false
+        }
+    
+    Connection string format:
+        postgresql://user:password@ep-xyz.us-east-1.neon.tech/metrics_db
+    
+    Neon database must have a table named 'time_series_data' with columns:
+        - metric_name (VARCHAR)
+        - period (VARCHAR)  
+        - segment (VARCHAR)
+        - value (NUMERIC/FLOAT)
+    """
+    try:
+        log.info(f"[SYNC] Starting sync from Neon with clear_existing={req.clear_existing}")
+        
+        # Clear existing data if requested
+        if req.clear_existing:
+            log.info("[SYNC] Clearing existing local data...")
+            db.query(TimeSeriesData).delete()
+            db.commit()
+            log.info("[SYNC] Cleared existing local time-series data")
+        
+        # Connect to Neon
+        log.info(f"[SYNC] Connecting to Neon...")
+        neon_source = NeonDataSource(req.neon_connection_string)
+        
+        # Test connection
+        log.info("[SYNC] Testing Neon connection...")
+        if not neon_source.test_connection():
+            log.error("[SYNC] Neon connection test failed")
+            raise HTTPException(
+                status_code=400, 
+                detail="Failed to connect to Neon database. Check connection string."
+            )
+        log.info("[SYNC] Neon connection test successful")
+        
+        # Fetch data from Neon
+        log.info("[SYNC] Fetching metrics from Neon...")
+        try:
+            rows_data = neon_source.fetch_metrics()
+            log.info(f"[SYNC] Fetched {len(rows_data)} rows from Neon")
+        except Exception as e:
+            log.error(f"[SYNC] Error fetching metrics: {type(e).__name__}: {e}")
+            raise
+        
+        if not rows_data:
+            log.error("[SYNC] No data returned from fetch_metrics()")
+            neon_source.close()
+            raise HTTPException(
+                status_code=400,
+                detail="No data found in Neon database. Ensure time_series_data table exists."
+            )
+        
+        # Insert into local database
+        inserted = 0
+        updated = 0
+        errors = []
+        
+        for row in rows_data:
+            try:
+                metric_name = row.get("metric_name", "").strip()
+                period = row.get("period", "").strip()
+                segment = row.get("segment", "").strip()
+                value = float(row.get("value", 0))
+                
+                if not all([metric_name, period, segment]):
+                    errors.append(f"Row missing required fields: {row}")
+                    continue
+                
+                # Check if exists
+                existing = db.query(TimeSeriesData).filter(
+                    TimeSeriesData.metric_name == metric_name,
+                    TimeSeriesData.period == period,
+                    TimeSeriesData.segment == segment,
+                ).first()
+                
+                if existing:
+                    existing.value = value
+                    updated += 1
+                else:
+                    ts = TimeSeriesData(
+                        metric_name=metric_name,
+                        period=period,
+                        segment=segment,
+                        value=value,
+                        is_computed=False,
+                    )
+                    db.add(ts)
+                    inserted += 1
+            
+            except Exception as e:
+                errors.append(f"Row error: {str(e)}")
+        
+        db.commit()
+        neon_source.close()
+        
+        result = {
+            "status": "success",
+            "rows_inserted": inserted,
+            "rows_updated": updated,
+            "total_rows_synced": inserted + updated,
+            "errors": errors,
+            "error_count": len(errors),
+        }
+        
+        log.info(f"Neon sync complete: {inserted} inserted, {updated} updated")
+        _invalidate_graph()
+        return result
+    
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.exception("Neon sync error")
         raise HTTPException(status_code=500, detail=str(exc))

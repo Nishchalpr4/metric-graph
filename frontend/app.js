@@ -6,7 +6,7 @@
 // Render example: https://metric-graph-xxxxx.onrender.com
 const API = typeof window !== 'undefined' && window.location.hostname !== 'localhost' 
   ? window.location.origin.replace('pages.dev', 'onrender.com')  // Auto-detect if on Cloudflare
-  : 'http://127.0.0.1:8001';  // Local dev
+  : 'http://127.0.0.1:8000';  // Local dev
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap
@@ -31,6 +31,44 @@ async function seedDatabase() {
         <p style="margin-top:12px;color:var(--muted);font-size:12px;">
           You can now ask questions about your metrics.
         </p>
+      </div>
+    `);
+  } catch (e) {
+    showError(e.message);
+  }
+}
+
+async function syncFromNeon() {
+  const connStr = document.getElementById('neonConnStr').value.trim();
+  if (!connStr) {
+    showError('Please paste your Neon connection string');
+    return;
+  }
+  showLoading('Syncing data from Neon…');
+  try {
+    const result = await apiFetch('/api/sync-from-neon', {
+      method: 'POST',
+      body: JSON.stringify({
+        neon_connection_string: connStr,
+        clear_existing: false
+      }),
+    });
+    showContent(`
+      <div class="card">
+        <div class="card-title" style="color:var(--green);">✓ Neon Sync Successful</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0;font-size:13px;">
+          <div><span style="color:var(--muted);">Rows Synced:</span> <strong>${result.total_rows_synced || 0}</strong></div>
+          <div><span style="color:var(--muted);">Inserted:</span> <strong>${result.rows_inserted || 0}</strong></div>
+          <div><span style="color:var(--muted);">Updated:</span> <strong>${result.rows_updated || 0}</strong></div>
+          <div><span style="color:var(--muted);">Errors:</span> <strong style="color:${result.error_count > 0 ? 'var(--red)' : 'var(--green)'};">${result.error_count || 0}</strong></div>
+        </div>
+        ${result.errors && result.errors.length ? `
+          <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:4px;padding:8px;font-size:11px;color:var(--red);max-height:150px;overflow-y:auto;">
+            <div style="font-weight:600;margin-bottom:6px;">Errors encountered:</div>
+            ${result.errors.map(e => `<div>• ${escHtml(e)}</div>`).join('')}
+          </div>
+        ` : '<p style="color:var(--green);font-size:12px;">All rows synced without errors!</p>'}
+        <p style="margin-top:12px;color:var(--muted);font-size:12px;">You can now ask questions about your metrics.</p>
       </div>
     `);
   } catch (e) {
