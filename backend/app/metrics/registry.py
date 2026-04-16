@@ -174,6 +174,15 @@ METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
         "category": "Financial",
         "is_base": False,
     },
+    "ebitda": {
+        "display_name": "EBITDA",
+        "description": "Earnings Before Interest, Taxes, Depreciation, Amortization = Revenue - Operating Expenses",
+        "formula": "revenue - (delivery_charges + discounts) * 0.15",
+        "formula_inputs": ["revenue", "delivery_charges", "discounts"],
+        "unit": "₹B",
+        "category": "Financial",
+        "is_base": False,
+    },
 }
 
 
@@ -193,6 +202,7 @@ FORMULA_FUNCTIONS: Dict[str, Callable[[Dict[str, float]], float]] = {
     "arpu": lambda v: (v["revenue"] / v["active_users"] * 1000) if v["active_users"] else 0.0,
     "order_frequency": lambda v: (v["orders"] / v["active_users"]) if v["active_users"] else 0.0,
     "cac": lambda v: (v["marketing_spend"] / v["new_users"] * 1000) if v["new_users"] else 0.0,
+    "ebitda": lambda v: v["revenue"] - (v["delivery_charges"] + v["discounts"]) * 0.15,
 }
 
 # Topological order — base metrics first, then dependents in dependency order
@@ -206,7 +216,7 @@ COMPUTATION_ORDER: List[str] = [
     # level-2 derived
     "revenue",
     # level-3 derived
-    "take_rate", "arpu", "order_frequency", "cac",
+    "take_rate", "arpu", "order_frequency", "cac", "ebitda",
 ]
 
 
@@ -354,6 +364,28 @@ RELATIONSHIP_DEFINITIONS: List[Dict[str, Any]] = [
         "source": "restaurant_partners", "target": "gmv",
         "type": "causal_driver", "direction": "positive", "strength": 0.45,
         "explanation": "More supply-side partners drive both order volume and AOV, growing GMV.",
+    },
+    
+    # ── EBITDA Relationships ──────────────────────────────────────────────────
+    {
+        "source": "revenue", "target": "ebitda",
+        "type": "formula_dependency", "direction": "positive", "strength": 0.95,
+        "explanation": "EBITDA = Revenue - Operating Costs. Higher revenue directly increases EBITDA.",
+    },
+    {
+        "source": "delivery_charges", "target": "ebitda",
+        "type": "formula_dependency", "direction": "negative", "strength": 0.40,
+        "explanation": "Delivery costs reduce EBITDA as a component of operating expenses.",
+    },
+    {
+        "source": "discounts", "target": "ebitda",
+        "type": "formula_dependency", "direction": "negative", "strength": 0.35,
+        "explanation": "Platform discounts reduce EBITDA through the operating expense factor.",
+    },
+    {
+        "source": "marketing_spend", "target": "ebitda",
+        "type": "causal_driver", "direction": "negative", "strength": 0.55,
+        "explanation": "Higher marketing spend reduces profitability and EBITDA levels.",
     },
 ]
 

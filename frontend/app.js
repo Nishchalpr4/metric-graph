@@ -39,17 +39,11 @@ async function seedDatabase() {
 }
 
 async function syncFromNeon() {
-  const connStr = document.getElementById('neonConnStr').value.trim();
-  if (!connStr) {
-    showError('Please paste your Neon connection string');
-    return;
-  }
   showLoading('Syncing data from Neon…');
   try {
     const result = await apiFetch('/api/sync-from-neon', {
       method: 'POST',
       body: JSON.stringify({
-        neon_connection_string: connStr,
         clear_existing: false
       }),
     });

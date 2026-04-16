@@ -25,11 +25,11 @@
     <!-- ── Sidebar ───────────────────────────────────────────────── -->
     <aside class="sidebar">
 
-      <!-- Neon Database Sync -->
+      <!-- Neon Database Sync (Auto-configured) -->
       <div class="search-box">
-        <label>Sync from Neon Database</label>
-        <textarea id="neonConnStr" placeholder="postgresql://user:password@ep-xyz.neon.tech/dbname" rows="2"></textarea>
-        <button class="btn btn-outline" onclick="syncFromNeon()">🔗 Sync Data</button>
+        <label>Sync Neon Data</label>
+        <p style="font-size:11px;color:var(--muted);margin:0 0 8px 0;">Connected to Neon via .env</p>
+        <button class="btn btn-outline" onclick="syncFromNeon()">🔗 Sync Now</button>
       </div>
 
       <!-- Natural Language Query -->

@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..config import DATABASE_URL
 from ..database import get_db
 from ..data.importer import import_metrics_from_csv
 from ..data.postgres_source import NeonDataSource
@@ -66,7 +67,6 @@ class DirectAnalysisRequest(BaseModel):
 
 
 class NeonSyncRequest(BaseModel):
-    neon_connection_string: str
     clear_existing: bool = False
 
 
@@ -285,9 +285,9 @@ def sync_from_neon(req: NeonSyncRequest, db: Session = Depends(get_db)):
             db.commit()
             log.info("[SYNC] Cleared existing local time-series data")
         
-        # Connect to Neon
+        # Connect to Neon using DATABASE_URL from config
         log.info(f"[SYNC] Connecting to Neon...")
-        neon_source = NeonDataSource(req.neon_connection_string)
+        neon_source = NeonDataSource(DATABASE_URL)
         
         # Test connection
         log.info("[SYNC] Testing Neon connection...")
@@ -295,7 +295,7 @@ def sync_from_neon(req: NeonSyncRequest, db: Session = Depends(get_db)):
             log.error("[SYNC] Neon connection test failed")
             raise HTTPException(
                 status_code=400, 
-                detail="Failed to connect to Neon database. Check connection string."
+                detail="Failed to connect to Neon database. Check DATABASE_URL in .env."
             )
         log.info("[SYNC] Neon connection test successful")
         

@@ -25,6 +25,7 @@ from ..metrics.registry import METRIC_REGISTRY, ALL_PERIODS
 
 _METRIC_ALIASES: dict[str, list[str]] = {
     "revenue":          ["revenue", "net revenue", "platform revenue"],
+    "ebitda":           ["ebitda", "ebita", "earnings before interest taxes depreciation amortization"],
     "gmv":              ["gmv", "gross merchandise value", "gross merchandise", "gross merch"],
     "aov":              ["aov", "average order value", "order value", "avg order value"],
     "orders":           ["orders", "order count", "total orders", "number of orders", "order volume"],
