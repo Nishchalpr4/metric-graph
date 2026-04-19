@@ -3,8 +3,8 @@ Database Seeder
 
 Sequence:
   1. Drop and recreate all tables (idempotent).
-  2. Insert metric definitions from METRIC_REGISTRY.
-  3. Insert causal/formula relationship edges from RELATIONSHIP_DEFINITIONS.
+  2. Insert metric definitions from DEFAULT_METRICS (seed data).
+  3. Insert causal/formula relationship edges from DEFAULT_RELATIONSHIPS.
   
 Note: Time-series data should be imported via /api/import-csv endpoint.
 """
@@ -18,24 +18,16 @@ from ..models.db_models import (
     Metric, MetricRelationship, TimeSeriesData, CausalEvent
 )
 from .registry import (
-    METRIC_REGISTRY, RELATIONSHIP_DEFINITIONS, COMPUTATION_ORDER, ALL_PERIODS
+    DEFAULT_METRICS, DEFAULT_RELATIONSHIPS
 )
 
 log = logging.getLogger(__name__)
 
-SEGMENTS = ["Food Delivery", "Grocery Delivery"]
-
 
 def seed_all(db: Session) -> dict:
-    """Drop, recreate, and seed the metric definitions and relationships. Returns a summary dict."""
-    log.info("Dropping and recreating tables …")
-    # Use CASCADE to handle any pre-existing foreign key dependencies from
-    # older table schemas that may reside in the same DB.
-    with engine.connect() as conn:
-        conn.execute(text("DROP SCHEMA public CASCADE"))
-        conn.execute(text("CREATE SCHEMA public"))
-        conn.execute(text("GRANT ALL ON SCHEMA public TO PUBLIC"))
-        conn.commit()
+    """Create schema and seed metric definitions and relationships WITHOUT deleting data. Returns a summary dict."""
+    log.info("Creating schema and seeding metric definitions …")
+    # Create all tables if they don't exist (idempotent, preserves existing data)
     Base.metadata.create_all(bind=engine)
 
     counts = {
@@ -51,9 +43,15 @@ def seed_all(db: Session) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _seed_metrics(db: Session) -> int:
-    rows = []
-    for name, meta in METRIC_REGISTRY.items():
-        rows.append(Metric(
+    """Seed metric definitions (skip if already exist)"""
+    count = 0
+    for name, meta in DEFAULT_METRICS.items():
+        # Check if metric already exists
+        existing = db.query(Metric).filter(Metric.name == name).first()
+        if existing:
+            continue  # Skip, already exists
+        
+        metric = Metric(
             name=name,
             display_name=meta["display_name"],
             description=meta.get("description", ""),
@@ -62,25 +60,37 @@ def _seed_metrics(db: Session) -> int:
             unit=meta.get("unit", ""),
             category=meta.get("category", ""),
             is_base=meta.get("is_base", False),
-        ))
-    db.bulk_save_objects(rows)
+        )
+        db.add(metric)
+        count += 1
+    
     db.flush()
-    log.info("  Inserted %d metric definitions.", len(rows))
-    return len(rows)
+    log.info("  Inserted %d metric definitions.", count)
+    return count
 
 
 def _seed_relationships(db: Session) -> int:
-    rows = []
-    for rel in RELATIONSHIP_DEFINITIONS:
-        rows.append(MetricRelationship(
+    count = 0
+    for rel in DEFAULT_RELATIONSHIPS:
+        # Check if relationship already exists
+        existing = db.query(MetricRelationship).filter(
+            MetricRelationship.source_metric == rel["source"],
+            MetricRelationship.target_metric == rel["target"]
+        ).first()
+        if existing:
+            continue  # Skip, already exists
+        
+        relationship = MetricRelationship(
             source_metric=rel["source"],
             target_metric=rel["target"],
             relationship_type=rel["type"],
             direction=rel.get("direction", "positive"),
             strength=rel.get("strength", 1.0),
             explanation=rel.get("explanation", ""),
-        ))
-    db.bulk_save_objects(rows)
+        )
+        db.add(relationship)
+        count += 1
+    
     db.flush()
-    log.info("  Inserted %d relationships.", len(rows))
-    return len(rows)
+    log.info("  Inserted %d relationships.", count)
+    return count

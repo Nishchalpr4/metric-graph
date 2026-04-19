@@ -1,8 +1,19 @@
 #!/usr/bin/env python
 """
-Populate Neon database with time_series_data using raw psycopg2.
-This ensures proper transaction handling.
+⚠️  DO NOT RUN THIS SCRIPT ⚠️
+This script has been DEPRECATED and should NEVER be executed.
+It will DELETE and overwrite all metric data in your Neon database.
+
+Neon is your production database and must remain UNTOUCHED.
+Use the UI "Sync Now" button instead to sync from Neon to local SQLite.
+
+If you accidentally run this, your metric data will be DESTROYED.
 """
+
+import sys
+print("🚨 ERROR: This script is DISABLED and should not be run!")
+print("🚨 Your Neon database is READ-ONLY. Use UI sync instead.")
+sys.exit(1)
 
 import psycopg2
 import random
@@ -65,6 +76,74 @@ BASE_METRICS = {
     },
 }
 
+# Causal events for each period and segment
+CAUSAL_EVENTS = {
+    'Q1 2023': {
+        'Food Delivery': {
+            'event_name': 'Seasonal Growth & Restaurant Expansion',
+            'explanation': 'Seasonal growth peak with increased restaurant partnerships and new user acquisition campaigns.',
+            'affected_metrics': ['orders', 'restaurant_partners', 'new_users', 'active_users'],
+            'direction': 'positive',
+            'magnitude': 'high',
+        },
+        'Grocery Delivery': {
+            'event_name': 'Post-Holiday Demand Surge',
+            'explanation': 'Post-holiday surge in fresh grocery demand with premium tier expansion.',
+            'affected_metrics': ['orders', 'aov', 'active_users'],
+            'direction': 'positive',
+            'magnitude': 'medium',
+        },
+    },
+    'Q2 2023': {
+        'Food Delivery': {
+            'event_name': 'Summer Growth & Zone Expansion',
+            'explanation': 'Summer growth driven by outdoor dining promotions and expanded delivery zones.',
+            'affected_metrics': ['orders', 'new_users', 'marketing_spend'],
+            'direction': 'positive',
+            'magnitude': 'high',
+        },
+        'Grocery Delivery': {
+            'event_name': 'Sustained Demand & Subscriptions',
+            'explanation': 'Sustained demand with focus on organic produce partnerships and subscription services.',
+            'affected_metrics': ['aov', 'active_users', 'basket_size'],
+            'direction': 'positive',
+            'magnitude': 'medium',
+        },
+    },
+    'Q3 2023': {
+        'Food Delivery': {
+            'event_name': 'Delivery Optimization & City Expansion',
+            'explanation': 'Optimization of delivery routes improved ARPU while expanding into tier-2 cities.',
+            'affected_metrics': ['delivery_charges', 'arpu', 'new_users'],
+            'direction': 'positive',
+            'magnitude': 'high',
+        },
+        'Grocery Delivery': {
+            'event_name': 'Agricultural Partnerships Growth',
+            'explanation': 'Agricultural partnership boost increased basket sizes and order frequency.',
+            'affected_metrics': ['aov', 'basket_size', 'order_frequency'],
+            'direction': 'positive',
+            'magnitude': 'medium',
+        },
+    },
+    'Q4 2023': {
+        'Food Delivery': {
+            'event_name': 'Festival Season Peak',
+            'explanation': 'Year-end festival season peak with aggressive marketing spend and premium restaurant additions.',
+            'affected_metrics': ['orders', 'marketing_spend', 'restaurant_partners', 'revenue'],
+            'direction': 'positive',
+            'magnitude': 'very_high',
+        },
+        'Grocery Delivery': {
+            'event_name': 'Holiday Shopping Surge',
+            'explanation': 'Holiday shopping surge with expanded inventory and faster delivery capabilities.',
+            'affected_metrics': ['orders', 'active_users', 'delivery_charges'],
+            'direction': 'positive',
+            'magnitude': 'high',
+        },
+    },
+}
+
 def compute_derived_metrics(base_values):
     """Compute derived metrics from base metrics"""
     orders = base_values.get('orders', 0)
@@ -104,13 +183,7 @@ def main():
         
         print("✓ Connected\n")
         
-        # Clear
-        print("🧹 Clearing existing time_series_data...")
-        cur.execute("DELETE FROM time_series_data")
-        conn.commit()
-        print("✓ Cleared\n")
-        
-        # Insert BASE + DERIVED metrics
+        # Insert BASE + DERIVED metrics (UPSERT - only add if not exists)
         print("📊 Inserting metric data...\n")
         total_inserted = 0
         
@@ -126,23 +199,25 @@ def main():
                         value = round(value + variance, 2)
                         base_values[metric_name] = value
                 
-                # Insert base metrics
+                # Insert base metrics (skip if already exists)
                 for metric_name, value in base_values.items():
                     cur.execute(
                         """INSERT INTO time_series_data 
                            (metric_name, period, segment, value, is_computed, created_at)
-                           VALUES (%s, %s, %s, %s, false, NOW())""",
+                           VALUES (%s, %s, %s, %s, false, NOW())
+                           ON CONFLICT (metric_name, period, segment) DO NOTHING""",
                         (metric_name, period, segment, value)
                     )
                     total_inserted += 1
                 
-                # Compute and insert derived metrics
+                # Compute and insert derived metrics (skip if already exists)
                 derived = compute_derived_metrics(base_values)
                 for metric_name, value in derived.items():
                     cur.execute(
                         """INSERT INTO time_series_data 
                            (metric_name, period, segment, value, is_computed, created_at)
-                           VALUES (%s, %s, %s, %s, true, NOW())""",
+                           VALUES (%s, %s, %s, %s, true, NOW())
+                           ON CONFLICT (metric_name, period, segment) DO NOTHING""",
                         (metric_name, period, segment, value)
                     )
                     total_inserted += 1
@@ -166,6 +241,38 @@ def main():
         print("Sample data:")
         for row in cur.fetchall():
             print(f"  {row[0]:20} | {row[1]:10} | {row[2]:20} | {row[3]:.2f}")
+        
+        # Insert causal events
+        print("\n📚 Inserting causal events...\n")
+        events_inserted = 0
+        
+        for period, segments_dict in CAUSAL_EVENTS.items():
+            print(f"  {period}")
+            for segment, event_data in segments_dict.items():
+                cur.execute(
+                    """INSERT INTO causal_events 
+                       (period, event_name, segment, affected_metrics, direction, magnitude, explanation, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())""",
+                    (
+                        period,
+                        event_data['event_name'],
+                        segment,
+                        event_data['affected_metrics'],  # PostgreSQL array
+                        event_data['direction'],
+                        event_data['magnitude'],
+                        event_data['explanation']
+                    )
+                )
+                events_inserted += 1
+            conn.commit()
+            print(f"    ✓ {segment} - causal event added")
+        
+        print(f"\n✅ Successfully inserted {events_inserted} causal events (1 per segment × 4 periods)\n")
+        
+        # Verify causal events
+        cur.execute("SELECT COUNT(*) FROM causal_events")
+        event_count = cur.fetchone()[0]
+        print(f"✓ Verification: {event_count} causal events now in table\n")
         
         cur.close()
         conn.close()

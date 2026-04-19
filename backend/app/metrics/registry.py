@@ -1,23 +1,27 @@
 """
-Metric Registry — single source of truth for ALL metric definitions,
-formula functions, relationship definitions, and raw time-series data.
+Metric Registry — DYNAMIC LOADING from database at runtime
 
-Design principles:
-  - No hardcoded business values inside the engine; every rule lives here.
-  - Formulas are stored as both human-readable strings (for the DB) and
-    executable Python lambdas (for the computation engine).
-  - Relationships carry full metadata: type, direction, strength, explanation.
-  - Raw time-series data is keyed by (period, segment, metric_name).
+Architecture:
+  1. SEED DATA: Hardcoded metrics below are used ONLY to seed the database (/api/seed endpoint)
+  2. RUNTIME: All code loads metrics from the database via loader.py (zero hardcoding)
+  3. For any company: Just change the database, no code changes needed
+
+Import like this:
+  from .registry import METRIC_REGISTRY, FORMULA_FUNCTIONS, COMPUTATION_ORDER, ALL_PERIODS
+  
+  These are now dynamic - they pull from loader.py which cached DB data
 """
 
-from typing import Dict, Any, Callable, List, Tuple
+from typing import Dict, Any, Callable, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. METRIC DEFINITIONS
+# SEED DATA: Used only for database initialization
 # ─────────────────────────────────────────────────────────────────────────────
 
-METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
-
+DEFAULT_METRICS: Dict[str, Dict[str, Any]] = {
     # ── Base / Input Metrics ──────────────────────────────────────────────────
     "orders": {
         "display_name": "Orders",
@@ -118,7 +122,6 @@ METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
         "category": "Operational",
         "is_base": True,
     },
-
     # ── Derived / Computed Metrics ────────────────────────────────────────────
     "gmv": {
         "display_name": "Gross Merchandise Value (GMV)",
@@ -185,217 +188,66 @@ METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
 }
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. FORMULA FUNCTIONS (executable, no eval)
-#    Each lambda receives a dict {metric_name: float_value}.
-# ─────────────────────────────────────────────────────────────────────────────
-
-FORMULA_FUNCTIONS: Dict[str, Callable[[Dict[str, float]], float]] = {
-    "gmv": lambda v: v["orders"] * v["aov"] / 1000,
-    "revenue": lambda v: (
-        v["gmv"] * v["commission_rate"] / 100
-        + v["delivery_charges"]
-        - v["discounts"]
-    ),
-    "take_rate": lambda v: (v["revenue"] / v["gmv"] * 100) if v["gmv"] else 0.0,
-    "arpu": lambda v: (v["revenue"] / v["active_users"] * 1000) if v["active_users"] else 0.0,
-    "order_frequency": lambda v: (v["orders"] / v["active_users"]) if v["active_users"] else 0.0,
-    "cac": lambda v: (v["marketing_spend"] / v["new_users"] * 1000) if v["new_users"] else 0.0,
-    "ebitda": lambda v: v["revenue"] - (v["delivery_charges"] + v["discounts"]) * 0.15,
-}
-
-# Topological order — base metrics first, then dependents in dependency order
-COMPUTATION_ORDER: List[str] = [
-    # base
-    "orders", "aov", "commission_rate", "delivery_charges", "discounts",
-    "marketing_spend", "new_users", "active_users",
-    "basket_size", "restaurant_partners", "pricing_index",
-    # level-1 derived
-    "gmv",
-    # level-2 derived
-    "revenue",
-    # level-3 derived
-    "take_rate", "arpu", "order_frequency", "cac", "ebitda",
+DEFAULT_RELATIONSHIPS: List[Dict[str, Any]] = [
+    # Formula dependencies
+    {"source": "orders", "target": "gmv", "type": "formula_dependency", "direction": "positive", "strength": 0.9, "explanation": "GMV = Orders × AOV"},
+    {"source": "aov", "target": "gmv", "type": "formula_dependency", "direction": "positive", "strength": 0.9, "explanation": "GMV = Orders × AOV"},
+    {"source": "gmv", "target": "revenue", "type": "formula_dependency", "direction": "positive", "strength": 0.85, "explanation": "Revenue includes commission on GMV"},
+    {"source": "commission_rate", "target": "revenue", "type": "formula_dependency", "direction": "positive", "strength": 0.65, "explanation": "Higher commission rate lifts revenue"},
+    {"source": "delivery_charges", "target": "revenue", "type": "formula_dependency", "direction": "positive", "strength": 0.45, "explanation": "Delivery revenue is additive"},
+    {"source": "discounts", "target": "revenue", "type": "formula_dependency", "direction": "negative", "strength": 0.50, "explanation": "Discounts reduce revenue"},
+    {"source": "revenue", "target": "take_rate", "type": "formula_dependency", "direction": "positive", "strength": 0.9, "explanation": "Take Rate = Revenue / GMV"},
+    {"source": "gmv", "target": "take_rate", "type": "formula_dependency", "direction": "negative", "strength": 0.9, "explanation": "Take Rate = Revenue / GMV"},
+    {"source": "revenue", "target": "arpu", "type": "formula_dependency", "direction": "positive", "strength": 0.9, "explanation": "ARPU = Revenue / MAU"},
+    {"source": "active_users", "target": "arpu", "type": "formula_dependency", "direction": "negative", "strength": 0.7, "explanation": "More users dilutes ARPU"},
+    {"source": "orders", "target": "order_frequency", "type": "formula_dependency", "direction": "positive", "strength": 0.9, "explanation": "Order Frequency = Orders / MAU"},
+    {"source": "active_users", "target": "order_frequency", "type": "formula_dependency", "direction": "negative", "strength": 0.7, "explanation": "More users dilutes frequency"},
+    {"source": "marketing_spend", "target": "cac", "type": "formula_dependency", "direction": "positive", "strength": 0.9, "explanation": "CAC = Marketing Spend / New Users"},
+    {"source": "new_users", "target": "cac", "type": "formula_dependency", "direction": "negative", "strength": 0.9, "explanation": "More acquisitions lower CAC"},
+    # Causal drivers
+    {"source": "basket_size", "target": "aov", "type": "causal_driver", "direction": "positive", "strength": 0.75, "explanation": "More items per order raises AOV"},
+    {"source": "pricing_index", "target": "aov", "type": "causal_driver", "direction": "positive", "strength": 0.60, "explanation": "Higher prices increase AOV"},
+    {"source": "restaurant_partners", "target": "aov", "type": "causal_driver", "direction": "positive", "strength": 0.35, "explanation": "Premium restaurants increase AOV"},
+    {"source": "discounts", "target": "aov", "type": "causal_driver", "direction": "negative", "strength": 0.40, "explanation": "Heavy discounts attract low-value orders"},
+    {"source": "active_users", "target": "orders", "type": "causal_driver", "direction": "positive", "strength": 0.85, "explanation": "More users generate orders"},
+    {"source": "order_frequency", "target": "orders", "type": "causal_driver", "direction": "positive", "strength": 0.80, "explanation": "Higher frequency expands order volume"},
+    {"source": "discounts", "target": "orders", "type": "causal_driver", "direction": "positive", "strength": 0.60, "explanation": "Discounts generate extra orders"},
+    {"source": "restaurant_partners", "target": "orders", "type": "causal_driver", "direction": "positive", "strength": 0.50, "explanation": "More restaurants improve conversion"},
+    {"source": "marketing_spend", "target": "orders", "type": "causal_driver", "direction": "positive", "strength": 0.50, "explanation": "Marketing drives orders"},
+    {"source": "new_users", "target": "active_users", "type": "causal_driver", "direction": "positive", "strength": 0.70, "explanation": "New users increase MAU"},
 ]
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. RELATIONSHIP DEFINITIONS
-#    Each entry becomes one row in metric_relationships.
+# DYNAMIC REGISTRY: Populated at runtime from database
 # ─────────────────────────────────────────────────────────────────────────────
 
-RELATIONSHIP_DEFINITIONS: List[Dict[str, Any]] = [
+# These are functions that call the loader - populated at startup
+def METRIC_REGISTRY() -> Dict[str, Dict[str, Any]]:
+    """Get metrics from database (loaded at startup). Falls back to seed data if DB empty."""
+    from .loader import get_metric_registry
+    registry = get_metric_registry()
+    return registry if registry else DEFAULT_METRICS
 
-    # ── Formula Dependencies ──────────────────────────────────────────────────
-    {
-        "source": "orders", "target": "gmv",
-        "type": "formula_dependency", "direction": "positive", "strength": 0.9,
-        "explanation": "GMV = Orders × AOV. Orders is a direct multiplicative input.",
-    },
-    {
-        "source": "aov", "target": "gmv",
-        "type": "formula_dependency", "direction": "positive", "strength": 0.9,
-        "explanation": "GMV = Orders × AOV. AOV is a direct multiplicative input.",
-    },
-    {
-        "source": "gmv", "target": "revenue",
-        "type": "formula_dependency", "direction": "positive", "strength": 0.85,
-        "explanation": "Revenue = GMV × Commission Rate + Delivery − Discounts. GMV is the primary revenue lever.",
-    },
-    {
-        "source": "commission_rate", "target": "revenue",
-        "type": "formula_dependency", "direction": "positive", "strength": 0.65,
-        "explanation": "A higher commission rate multiplied against GMV directly lifts revenue.",
-    },
-    {
-        "source": "delivery_charges", "target": "revenue",
-        "type": "formula_dependency", "direction": "positive", "strength": 0.45,
-        "explanation": "Delivery revenue is an additive component of total platform revenue.",
-    },
-    {
-        "source": "discounts", "target": "revenue",
-        "type": "formula_dependency", "direction": "negative", "strength": 0.50,
-        "explanation": "Platform-funded discounts are subtracted from revenue; more discounts = lower revenue.",
-    },
-    {
-        "source": "revenue", "target": "take_rate",
-        "type": "formula_dependency", "direction": "positive", "strength": 0.9,
-        "explanation": "Take Rate = Revenue / GMV. Higher revenue raises take rate.",
-    },
-    {
-        "source": "gmv", "target": "take_rate",
-        "type": "formula_dependency", "direction": "negative", "strength": 0.9,
-        "explanation": "Take Rate = Revenue / GMV. Higher GMV with same revenue dilutes take rate.",
-    },
-    {
-        "source": "revenue", "target": "arpu",
-        "type": "formula_dependency", "direction": "positive", "strength": 0.9,
-        "explanation": "ARPU = Revenue / MAU. Revenue growth directly lifts ARPU.",
-    },
-    {
-        "source": "active_users", "target": "arpu",
-        "type": "formula_dependency", "direction": "negative", "strength": 0.7,
-        "explanation": "ARPU = Revenue / MAU. More users (same revenue) dilutes per-user revenue.",
-    },
-    {
-        "source": "orders", "target": "order_frequency",
-        "type": "formula_dependency", "direction": "positive", "strength": 0.9,
-        "explanation": "Order Frequency = Orders / MAU.",
-    },
-    {
-        "source": "active_users", "target": "order_frequency",
-        "type": "formula_dependency", "direction": "negative", "strength": 0.7,
-        "explanation": "More users ordering the same total dilutes per-user frequency.",
-    },
-    {
-        "source": "marketing_spend", "target": "cac",
-        "type": "formula_dependency", "direction": "positive", "strength": 0.9,
-        "explanation": "CAC = Marketing Spend / New Users. More spend raises CAC.",
-    },
-    {
-        "source": "new_users", "target": "cac",
-        "type": "formula_dependency", "direction": "negative", "strength": 0.9,
-        "explanation": "CAC = Marketing Spend / New Users. More acquisitions lower CAC.",
-    },
+def FORMULA_FUNCTIONS() -> Dict[str, Callable]:
+    """Get compiled formulas from database (loaded at startup)."""
+    from .loader import get_formula_functions
+    return get_formula_functions()
 
-    # ── Causal Drivers ────────────────────────────────────────────────────────
-    {
-        "source": "basket_size", "target": "aov",
-        "type": "causal_driver", "direction": "positive", "strength": 0.75,
-        "explanation": "More items per order raises the total bill — the single biggest AOV driver.",
-    },
-    {
-        "source": "pricing_index", "target": "aov",
-        "type": "causal_driver", "direction": "positive", "strength": 0.60,
-        "explanation": "Higher average menu prices (e.g. premiumisation) increase AOV.",
-    },
-    {
-        "source": "restaurant_partners", "target": "aov",
-        "type": "causal_driver", "direction": "positive", "strength": 0.35,
-        "explanation": "Expansion into premium restaurants introduces higher-priced items, lifting AOV.",
-    },
-    {
-        "source": "discounts", "target": "aov",
-        "type": "causal_driver", "direction": "negative", "strength": 0.40,
-        "explanation": "Large blanket discounts attract price-sensitive, smaller orders, pulling AOV down.",
-    },
-    {
-        "source": "active_users", "target": "orders",
-        "type": "causal_driver", "direction": "positive", "strength": 0.85,
-        "explanation": "Every incremental active user generates orders — the strongest volume driver.",
-    },
-    {
-        "source": "order_frequency", "target": "orders",
-        "type": "causal_driver", "direction": "positive", "strength": 0.80,
-        "explanation": "Users ordering more frequently expand total order volume.",
-    },
-    {
-        "source": "discounts", "target": "orders",
-        "type": "causal_driver", "direction": "positive", "strength": 0.60,
-        "explanation": "Promotional discounts reduce friction and pull in extra orders.",
-    },
-    {
-        "source": "restaurant_partners", "target": "orders",
-        "type": "causal_driver", "direction": "positive", "strength": 0.50,
-        "explanation": "Wider restaurant selection improves conversion; more choices → more orders.",
-    },
-    {
-        "source": "marketing_spend", "target": "orders",
-        "type": "causal_driver", "direction": "positive", "strength": 0.50,
-        "explanation": "Demand-generation campaigns (performance ads, notifications) drive incremental orders.",
-    },
-    {
-        "source": "new_users", "target": "active_users",
-        "type": "causal_driver", "direction": "positive", "strength": 0.70,
-        "explanation": "Newly acquired users enter and grow the active-user base.",
-    },
-    {
-        "source": "marketing_spend", "target": "new_users",
-        "type": "causal_driver", "direction": "positive", "strength": 0.75,
-        "explanation": "User-acquisition campaigns (referral, app-store ads) directly bring in new users.",
-    },
-    {
-        "source": "basket_size", "target": "gmv",
-        "type": "causal_driver", "direction": "positive", "strength": 0.55,
-        "explanation": "Larger baskets raise AOV which flows into higher GMV.",
-    },
-    {
-        "source": "restaurant_partners", "target": "gmv",
-        "type": "causal_driver", "direction": "positive", "strength": 0.45,
-        "explanation": "More supply-side partners drive both order volume and AOV, growing GMV.",
-    },
-    
-    # ── EBITDA Relationships ──────────────────────────────────────────────────
-    {
-        "source": "revenue", "target": "ebitda",
-        "type": "formula_dependency", "direction": "positive", "strength": 0.95,
-        "explanation": "EBITDA = Revenue - Operating Costs. Higher revenue directly increases EBITDA.",
-    },
-    {
-        "source": "delivery_charges", "target": "ebitda",
-        "type": "formula_dependency", "direction": "negative", "strength": 0.40,
-        "explanation": "Delivery costs reduce EBITDA as a component of operating expenses.",
-    },
-    {
-        "source": "discounts", "target": "ebitda",
-        "type": "formula_dependency", "direction": "negative", "strength": 0.35,
-        "explanation": "Platform discounts reduce EBITDA through the operating expense factor.",
-    },
-    {
-        "source": "marketing_spend", "target": "ebitda",
-        "type": "causal_driver", "direction": "negative", "strength": 0.55,
-        "explanation": "Higher marketing spend reduces profitability and EBITDA levels.",
-    },
-]
+def COMPUTATION_ORDER() -> List[str]:
+    """Get computation order from database (loaded at startup)."""
+    from .loader import get_computation_order
+    order = get_computation_order()
+    return order if order else list(DEFAULT_METRICS.keys())
 
+def ALL_PERIODS() -> List[str]:
+    """Get all available periods from database (loaded at startup)."""
+    from .loader import get_all_periods
+    periods = get_all_periods()
+    # Return at least a placeholder
+    return periods if periods else ["Q1 2023", "Q2 2023", "Q3 2023", "Q4 2023"]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. AVAILABLE PERIODS (for reference)
-# ─────────────────────────────────────────────────────────────────────────────
-
-ALL_PERIODS = [
-    "Q1 2022", "Q2 2022", "Q3 2022", "Q4 2022",
-    "Q1 2023", "Q2 2023", "Q3 2023", "Q4 2023",
-]
-
+def RELATIONSHIP_DEFINITIONS() -> List[Dict[str, Any]]:
+    """Get relationships from database (loaded at startup)."""
+    from .loader import get_relationships
+    rels = get_relationships()
+    return rels if rels else DEFAULT_RELATIONSHIPS

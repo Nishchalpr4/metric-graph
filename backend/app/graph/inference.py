@@ -76,7 +76,8 @@ def analyse(
     pct_change = (total_change / abs(prev_val) * 100) if prev_val else 0.0
     direction = "increased" if total_change >= 0 else "decreased"
 
-    meta = METRIC_REGISTRY.get(metric_name, {})
+    metrics_registry = METRIC_REGISTRY()
+    meta = metrics_registry.get(metric_name, {})
 
     # Recursive decomposition
     drivers = _decompose(
@@ -155,7 +156,8 @@ def _decompose(
     if depth >= _MAX_DEPTH:
         return []
 
-    meta = METRIC_REGISTRY.get(metric_name, {})
+    metrics_registry = METRIC_REGISTRY()
+    meta = metrics_registry.get(metric_name, {})
     formula_inputs: List[str] = meta.get("formula_inputs") or []
     drivers: List[Dict[str, Any]] = []
 
@@ -177,7 +179,8 @@ def _decompose(
             inp_pct = (inp_change / abs(inp_prev) * 100) if inp_prev else 0.0
             contrib_pct = (contrib / abs(parent_total_change) * 100) if parent_total_change else 0.0
 
-            inp_meta = METRIC_REGISTRY.get(inp, {})
+            metrics_registry = METRIC_REGISTRY()
+            inp_meta = metrics_registry.get(inp, {})
             edge_data = graph.get_edge_data(inp, metric_name) or {}
 
             driver = {
@@ -234,7 +237,8 @@ def _decompose(
             if abs(u_pct) < _SIG_PCT:
                 continue   # didn't change enough to matter
 
-            u_meta = METRIC_REGISTRY.get(u, {})
+            metrics_registry = METRIC_REGISTRY()
+            u_meta = metrics_registry.get(u, {})
             drivers.append({
                 "metric": u,
                 "display_name": u_meta.get("display_name", u),

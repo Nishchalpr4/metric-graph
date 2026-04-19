@@ -27,10 +27,15 @@ def compute_all_metrics(base_values: Dict[str, float]) -> Dict[str, float]:
     fill in every derived metric in topological order and return the full dict.
     """
     values = dict(base_values)
-    for metric in COMPUTATION_ORDER:
-        if metric in FORMULA_FUNCTIONS and metric not in values:
-            fn = FORMULA_FUNCTIONS[metric]
-            inputs = METRIC_REGISTRY[metric]["formula_inputs"]
+    metrics_registry = METRIC_REGISTRY()
+    formula_functions = FORMULA_FUNCTIONS()
+    computation_order = COMPUTATION_ORDER()
+    
+    for metric in computation_order:
+        if metric in formula_functions and metric not in values:
+            fn = formula_functions[metric]
+            metric_def = metrics_registry.get(metric, {})
+            inputs = metric_def.get("formula_inputs", [])
             input_vals = {k: values.get(k, 0.0) for k in inputs}
             try:
                 values[metric] = fn(input_vals)
@@ -58,11 +63,15 @@ def attribute_contributions(
         contributions: {input_name: attributed_amount}  (signed ₹/% etc.)
         total_change:  actual change in the metric
     """
-    fn = FORMULA_FUNCTIONS.get(metric_name)
+    formula_functions = FORMULA_FUNCTIONS()
+    metrics_registry = METRIC_REGISTRY()
+    
+    fn = formula_functions.get(metric_name)
     if fn is None:
         return {}, 0.0
 
-    inputs = METRIC_REGISTRY[metric_name]["formula_inputs"]
+    metric_def = metrics_registry.get(metric_name, {})
+    inputs = metric_def.get("formula_inputs", [])
 
     y_prev = _safe_call(fn, prev_values)
     y_curr = _safe_call(fn, curr_values)

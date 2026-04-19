@@ -92,9 +92,10 @@ def _trend_analysis(parsed: ParsedQuery, db: Session) -> Dict[str, Any]:
         .all()
     )
     # Sort by ALL_PERIODS order
-    period_order = {p: i for i, p in enumerate(ALL_PERIODS)}
+    all_periods = ALL_PERIODS()
+    period_order = {p: i for i, p in enumerate(all_periods)}
     sorted_rows = sorted(rows, key=lambda r: period_order.get(r.period, 999))
-    meta = METRIC_REGISTRY.get(parsed.metric, {})
+    meta = METRIC_REGISTRY().get(parsed.metric, {})
     return {
         "type": "trend",
         "metric": parsed.metric,
@@ -109,9 +110,15 @@ def _trend_analysis(parsed: ParsedQuery, db: Session) -> Dict[str, Any]:
 
 
 def _segment_breakdown(parsed: ParsedQuery, db: Session) -> Dict[str, Any]:
-    """Compare a metric across segments for the target period."""
-    segments = ["Food Delivery", "Grocery Delivery"]
-    meta = METRIC_REGISTRY.get(parsed.metric, {})
+    """Compare a metric across segments for the target period (dynamically loaded)."""
+    # Get all unique segments from the database for this metric in this period
+    segment_rows = db.query(TimeSeriesData.segment).filter(
+        TimeSeriesData.metric_name == parsed.metric,
+        TimeSeriesData.period == parsed.period,
+    ).distinct().all()
+    segments = [s[0] for s in segment_rows if s[0]]
+    
+    meta = METRIC_REGISTRY().get(parsed.metric, {})
     data = []
     for seg in segments:
         row = (

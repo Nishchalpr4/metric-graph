@@ -61,7 +61,7 @@ class TimeSeriesData(Base):
     id = Column(Integer, primary_key=True, index=True)
     metric_name = Column(String(100), ForeignKey("metrics.name"), nullable=False)
     period = Column(String(20), nullable=False)      # e.g. "Q3 2023"
-    segment = Column(String(100), default="Overall") # Food Delivery | Grocery Delivery | Overall
+    segment = Column(String(100), default="Overall")  # Default segment name
     value = Column(Float, nullable=False)
     is_computed = Column(Boolean, default=False)
     notes = Column(Text)

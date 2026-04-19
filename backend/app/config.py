@@ -3,9 +3,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL: str = os.getenv(
-    "DATABASE_URL",
-    "postgresql://neondb_owner:npg_oMzlU85mfZCI@ep-cold-frog-a1jh032w-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
-)
+# Database URL must be set in .env - no hardcoded fallback
+DATABASE_URL: str = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("❌ ERROR: DATABASE_URL not found in .env file!")
+
 APP_NAME: str = "Causal Financial Knowledge Graph"
 DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"

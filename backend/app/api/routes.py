@@ -63,7 +63,7 @@ class DirectAnalysisRequest(BaseModel):
     metric: str
     period: str
     compare_period: str
-    segment: str = "Food Delivery"
+    segment: Optional[str] = None  # If not provided, will use first available segment
 
 
 class NeonSyncRequest(BaseModel):
@@ -80,32 +80,56 @@ def health():
 
 
 @router.get("/suggestions")
-def suggestions():
-    """Return curated sample queries shown in the UI."""
-    return {
-        "suggestions": [
-            "Why did revenue increase in Q3 2023?",
-            "What drove GMV growth in Q3 2023 vs Q2 2023?",
-            "What caused AOV to rise in Q3 2023?",
-            "Why did orders surge in Q3 2023?",
-            "What drove active user growth in Q3 2023?",
-            "Show revenue trends for Food Delivery",
-            "Which segment contributed most to orders in Q3 2023?",
-            "Why did discounts increase in Q3 2023?",
-            "What is the trend for CAC?",
-            "Why did take rate improve in Q3 2023?",
+def suggestions(db: Session = Depends(get_db)):
+    """Generate sample queries dynamically from available metrics and periods."""
+    # Get available metrics (base ones that make sense for queries)
+    metrics = db.query(Metric).filter(Metric.is_base == True).limit(5).all()
+    metric_names = [m.name for m in metrics]
+    
+    # Get latest period
+    all_periods = ALL_PERIODS()
+    latest_period = all_periods[-1] if all_periods else "Q1 2023"
+    prev_period = all_periods[-2] if len(all_periods) > 1 else "Q4 2022"
+    
+    # Generate suggestions from available metrics
+    suggestions_list = []
+    if metric_names:
+        # Comparison queries
+        if len(metric_names) >= 1:
+            suggestions_list.append(f"Why did {metric_names[0]} increase in {latest_period}?")
+        if len(metric_names) >= 2:
+            suggestions_list.append(f"What drove {metric_names[1]} growth in {latest_period} vs {prev_period}?")
+        if len(metric_names) >= 3:
+            suggestions_list.append(f"What caused {metric_names[2]} to change in {latest_period}?")
+        
+        # Trend queries
+        if len(metric_names) >= 4:
+            suggestions_list.append(f"Show {metric_names[3]} trends across all periods")
+        if len(metric_names) >= 5:
+            suggestions_list.append(f"What is the trend for {metric_names[4]}?")
+    
+    # Fallback suggestions if no metrics available
+    if not suggestions_list:
+        suggestions_list = [
+            "What metrics are available in the system?",
+            "Show me the available periods",
+            "Compare metrics across segments",
         ]
-    }
+    
+    return {"suggestions": suggestions_list}
 
 
 @router.get("/periods")
 def get_periods():
-    return {"periods": ALL_PERIODS}
+    return {"periods": ALL_PERIODS()}
 
 
 @router.get("/segments")
-def get_segments():
-    return {"segments": ["Food Delivery", "Grocery Delivery"]}
+def get_segments(db: Session = Depends(get_db)):
+    """Get all unique segments from the database (dynamically loaded)."""
+    segments = db.query(TimeSeriesData.segment).distinct().order_by(TimeSeriesData.segment).all()
+    segment_list = [s[0] for s in segments if s[0]]  # Filter out None values
+    return {"segments": segment_list if segment_list else ["Overall"]}
 
 
 @router.get("/metrics")
@@ -131,12 +155,19 @@ def list_metrics(db: Session = Depends(get_db)):
 @router.get("/metric/{metric_name}")
 def get_metric(
     metric_name: str,
-    segment: str = "Food Delivery",
+    segment: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     m = db.query(Metric).filter(Metric.name == metric_name).first()
     if not m:
         raise HTTPException(status_code=404, detail=f"Metric '{metric_name}' not found.")
+
+    # If segment not provided, use the first available segment for this metric
+    if segment is None:
+        available = db.query(TimeSeriesData.segment).filter(
+            TimeSeriesData.metric_name == metric_name
+        ).distinct().first()
+        segment = available[0] if available else "Overall"
 
     rows = (
         db.query(TimeSeriesData)
@@ -146,7 +177,7 @@ def get_metric(
         )
         .all()
     )
-    period_order = {p: i for i, p in enumerate(ALL_PERIODS)}
+    period_order = {p: i for i, p in enumerate(ALL_PERIODS())}
     sorted_rows = sorted(rows, key=lambda r: period_order.get(r.period, 999))
 
     return {
@@ -189,19 +220,30 @@ def query_endpoint(req: QueryRequest, db: Session = Depends(get_db)):
 @router.post("/analyse")
 def analyse_direct(req: DirectAnalysisRequest, db: Session = Depends(get_db)):
     """Direct structured analysis without NL parsing (for programmatic use)."""
-    if req.metric not in METRIC_REGISTRY:
+    metric_registry = METRIC_REGISTRY()
+    all_periods = ALL_PERIODS()
+    
+    if req.metric not in metric_registry:
         raise HTTPException(status_code=400, detail=f"Unknown metric: {req.metric}")
-    if req.period not in ALL_PERIODS:
+    if req.period not in all_periods:
         raise HTTPException(status_code=400, detail=f"Unknown period: {req.period}")
-    if req.compare_period not in ALL_PERIODS:
+    if req.compare_period not in all_periods:
         raise HTTPException(status_code=400, detail=f"Unknown compare_period: {req.compare_period}")
+
+    # If segment not provided, use first available segment
+    segment = req.segment
+    if segment is None:
+        available = db.query(TimeSeriesData.segment).filter(
+            TimeSeriesData.metric_name == req.metric
+        ).distinct().first()
+        segment = available[0] if available else "Overall"
 
     g = _get_graph(db)
     result = analyse(
         metric_name=req.metric,
         period=req.period,
         compare_period=req.compare_period,
-        segment=req.segment,
+        segment=segment,
         db=db,
         graph=g,
     )

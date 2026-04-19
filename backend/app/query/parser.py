@@ -117,8 +117,9 @@ def parse_query(raw: str) -> ParsedQuery:
             compare_period = _prev_period(period)
         else:
             # Default: latest period vs previous
-            period = ALL_PERIODS[-1]
-            compare_period = ALL_PERIODS[-2]
+            all_periods = ALL_PERIODS()
+            period = all_periods[-1] if all_periods else "Q1 2023"
+            compare_period = all_periods[-2] if len(all_periods) > 1 else "Q4 2022"
             warnings.append(
                 f"No period found in query — defaulting to {period} vs {compare_period}."
             )
@@ -165,7 +166,7 @@ def _extract_segment(text: str) -> str:
         for alias in aliases:
             if alias in text:
                 return canonical
-    return "Food Delivery"   # platform default
+    return "Overall"   # generic default segment (not company-specific)
 
 
 def _extract_intent(text: str) -> tuple[str, Optional[str]]:
@@ -199,7 +200,8 @@ def _normalise_period(raw: str) -> str:
 
 def _prev_period(period: str) -> str:
     """Return the immediately preceding quarter."""
-    if period not in ALL_PERIODS:
+    all_periods = ALL_PERIODS()
+    if period not in all_periods:
         return period
-    idx = ALL_PERIODS.index(period)
-    return ALL_PERIODS[idx - 1] if idx > 0 else ALL_PERIODS[0]
+    idx = all_periods.index(period)
+    return all_periods[idx - 1] if idx > 0 else all_periods[0]

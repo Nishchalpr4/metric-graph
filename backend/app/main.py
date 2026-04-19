@@ -10,9 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import APP_NAME, DEBUG
-from .database import engine
+from .database import engine, SessionLocal
 from .models.db_models import Base   # noqa: F401  (import triggers table metadata)
 from .api.routes import router
+from .metrics.loader import load_metrics_from_database
 
 logging.basicConfig(
     level=logging.DEBUG if DEBUG else logging.INFO,
@@ -24,7 +25,17 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("Starting %s …", APP_NAME)
-    # Tables are created by the seeder; nothing to do here automatically.
+    
+    # Load metrics from database at startup
+    try:
+        db = SessionLocal()
+        load_metrics_from_database(db)
+        db.close()
+        log.info("✓ Metrics loaded from database")
+    except Exception as e:
+        log.warning(f"Could not load metrics from database at startup: {e}. "
+                   f"Metrics will be loaded on first use.")
+    
     yield
     log.info("Shutting down.")
 
