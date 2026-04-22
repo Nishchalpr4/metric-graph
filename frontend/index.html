@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Causal Financial Knowledge Graph</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Header ─────────────────────────────────────────────────── -->
+  <header>
+    <div>
+      <div class="logo">&#9651; NewMetric</div>
+      <div class="subtitle">Causal Financial Knowledge Graph · Institutional Equity Analytics</div>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:8px;">
+      <button class="btn btn-outline btn-sm" onclick="seedDatabase()">&#8635; Seed DB</button>
+    </div>
+  </header>
+
+  <div class="main">
+
+    <!-- ── Sidebar ───────────────────────────────────────────────── -->
+    <aside class="sidebar">
+
+      <!-- Neon Database Sync (Auto-configured) -->
+      <div class="search-box">
+        <label>Sync Neon Data</label>
+        <p style="font-size:11px;color:var(--muted);margin:0 0 8px 0;">Connected to Neon via .env</p>
+        <button class="btn btn-outline" onclick="syncFromNeon()">🔗 Sync Now</button>
+      </div>
+
+      <!-- Natural Language Query -->
+      <div class="search-box">
+        <label>Ask a question</label>
+        <textarea id="nlQuery" placeholder="Why did revenue increase in Q3 2023?" rows="3"></textarea>
+        <button class="btn btn-primary" onclick="runNLQuery()">&#10003; Analyse</button>
+      </div>
+
+    </aside>
+
+    <!-- ── Content ───────────────────────────────────────────────── -->
+    <main class="content" id="content">
+      <div class="greeting">
+        <h2>Causal Intelligence Platform</h2>
+        <p>Ask any natural-language question about your financial metrics.
+           The system will trace the exact causal chain behind every change.</p>
+        <br/>
+        <p style="color:var(--accent2);font-size:12px;">
+          ↑ Click "Seed DB" first to initialise the database, then ask away.
+        </p>
+      </div>
+    </main>
+
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

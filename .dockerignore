@@ -1,0 +1,17 @@
+.git
+.gitignore
+README.md
+.env
+.env.local
+__pycache__
+*.pyc
+.pytest_cache
+.vscode
+.idea
+node_modules
+.DS_Store
+.vercel
+build/
+dist/
+*.egg-info/
+.next/
