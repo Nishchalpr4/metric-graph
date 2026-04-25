@@ -466,6 +466,63 @@ def seed_database(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/debug/database-raw")
+def debug_database_raw(db: Session = Depends(get_db)):
+    """
+    DEBUG ENDPOINT: Query database with raw SQL, bypassing ORM.
+    Shows exactly what exists in Neon without ORM complications.
+    """
+    try:
+        from sqlalchemy import text
+        
+        # Use raw SQL to count rows (bypasses ORM)
+        company_count = db.execute(
+            text("SELECT COUNT(*) FROM mappings_canonical_companies")
+        ).scalar()
+        
+        period_count = db.execute(
+            text("SELECT COUNT(*) FROM financials_period")
+        ).scalar()
+        
+        filing_count = db.execute(
+            text("SELECT COUNT(*) FROM financials_filing")
+        ).scalar()
+        
+        pnl_count = db.execute(
+            text("SELECT COUNT(*) FROM financials_pnl")
+        ).scalar()
+        
+        # Also check if tables exist
+        table_check = db.execute(
+            text("""
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public'
+            ORDER BY table_name
+            """)
+        ).fetchall()
+        
+        return {
+            "status": "debug",
+            "message": "Raw database query results (bypasses ORM)",
+            "raw_sql_results": {
+                "companies": company_count,
+                "periods": period_count,
+                "filings": filing_count,
+                "pnl_records": pnl_count
+            },
+            "tables_found": len(table_check),
+            "table_names": [t[0] for t in table_check]
+        }
+    except Exception as e:
+        log.exception("Debug raw DB error")
+        return {
+            "status": "error",
+            "message": str(e),
+            "error_type": type(e).__name__
+        }
+
+
 @router.post("/sync-from-neon")
 def sync_from_neon(db: Session = Depends(get_db)):
     """
