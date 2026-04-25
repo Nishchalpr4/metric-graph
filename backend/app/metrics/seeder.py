@@ -15,7 +15,11 @@ from sqlalchemy.orm import Session
 
 from ..database import Base, engine
 from ..models.db_models import (
-    Metric, MetricRelationship, TimeSeriesData, CausalEvent
+    Metric, MetricRelationship, TimeSeriesData, CausalEvent,
+    # Financial data models
+    CanonicalCompany, CanonicalMetric, CanonicalMetricAlias,
+    CompanyAlias, CompanyTicker, FinancialsPeriod, FinancialsFiling,
+    FinancialsPnL, FinancialsBalanceSheet, FinancialsCashFlow, QueryLog
 )
 from .registry import (
     DEFAULT_METRICS, DEFAULT_RELATIONSHIPS
