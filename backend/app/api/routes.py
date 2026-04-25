@@ -429,8 +429,13 @@ def seed_database(db: Session = Depends(get_db)):
     """
     try:
         from ..metrics.loader import load_metrics_from_database
+        from ..metrics.seeder import seed_all
         from ..models.db_models import FinancialsFiling, FinancialsPeriod, CanonicalCompany
         from sqlalchemy import func
+        
+        # Step 0: Ensure all tables exist (creates schema if needed)
+        log.info("Ensuring database schema exists...")
+        seed_all(db)
         
         # Step 1: Quick health check - just count records
         log.info("Validating database connection...")
