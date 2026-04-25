@@ -424,19 +424,33 @@ def seed_database(db: Session = Depends(get_db)):
     """
     Seed the database with 100% REAL DATA from Neon.
     
-    LIGHTWEIGHT VERSION - Just load metrics and validate connection.
-    No expensive synchronization - all data is already in Neon.
+    This endpoint:
+    1. Creates all required tables
+    2. Syncs canonical companies from filings data
+    3. Syncs canonical metrics from financial data
+    4. Loads metrics into cache
     """
     try:
         from ..metrics.loader import load_metrics_from_database
         from ..metrics.seeder import seed_all
+        from .neon_integration import NeonDatabaseIntegration
         from sqlalchemy import text
         
         # Step 0: Ensure all tables exist (creates schema if needed)
         log.info("Ensuring database schema exists...")
         seed_all(db)
         
-        # Step 1: Quick health check - use RAW SQL to count records (bypasses ORM issues)
+        # Step 1: Sync canonical data from Neon financial tables
+        log.info("Syncing canonical companies from Neon financial data...")
+        neon_integration = NeonDatabaseIntegration(db)
+        company_sync = neon_integration.sync_canonical_companies_to_operational()
+        log.info(f"Company sync result: {company_sync}")
+        
+        log.info("Syncing canonical metrics from Neon financial data...")
+        metric_sync = neon_integration.sync_canonical_metrics_to_operational()
+        log.info(f"Metric sync result: {metric_sync}")
+        
+        # Step 2: Count actual records using RAW SQL (bypasses ORM issues)
         log.info("Validating database connection with raw SQL...")
         filing_count = db.execute(
             text("SELECT COUNT(*) FROM financials_filing")
@@ -450,7 +464,7 @@ def seed_database(db: Session = Depends(get_db)):
         
         log.info(f"DB validation: {filing_count} filings, {period_count} periods, {company_count} companies")
         
-        # Step 2: Load metrics into cache
+        # Step 3: Load metrics into cache
         log.info("Loading metrics from database...")
         metrics = load_metrics_from_database(db)
         
@@ -461,7 +475,11 @@ def seed_database(db: Session = Depends(get_db)):
                 "filings": filing_count or 0,
                 "periods": period_count or 0,
                 "companies": company_count or 0,
-                "metrics_loaded": len(metrics)
+                "metrics_loaded": len(metrics),
+                "sync_details": {
+                    "companies_synced": company_sync.get("synced", 0),
+                    "metrics_synced": metric_sync.get("synced", 0)
+                }
             },
             "instructions": "API is ready to accept /api/query requests with real financial data"
         }
