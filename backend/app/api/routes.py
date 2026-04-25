@@ -430,18 +430,23 @@ def seed_database(db: Session = Depends(get_db)):
     try:
         from ..metrics.loader import load_metrics_from_database
         from ..metrics.seeder import seed_all
-        from ..models.db_models import FinancialsFiling, FinancialsPeriod, CanonicalCompany
-        from sqlalchemy import func
+        from sqlalchemy import text
         
         # Step 0: Ensure all tables exist (creates schema if needed)
         log.info("Ensuring database schema exists...")
         seed_all(db)
         
-        # Step 1: Quick health check - just count records
-        log.info("Validating database connection...")
-        filing_count = db.query(func.count(FinancialsFiling.filing_id)).scalar()
-        period_count = db.query(func.count(FinancialsPeriod.period_id)).scalar()
-        company_count = db.query(func.count(CanonicalCompany.company_id)).scalar()
+        # Step 1: Quick health check - use RAW SQL to count records (bypasses ORM issues)
+        log.info("Validating database connection with raw SQL...")
+        filing_count = db.execute(
+            text("SELECT COUNT(*) FROM financials_filing")
+        ).scalar()
+        period_count = db.execute(
+            text("SELECT COUNT(*) FROM financials_period")
+        ).scalar()
+        company_count = db.execute(
+            text("SELECT COUNT(*) FROM mappings_canonical_companies")
+        ).scalar()
         
         log.info(f"DB validation: {filing_count} filings, {period_count} periods, {company_count} companies")
         
@@ -453,9 +458,9 @@ def seed_database(db: Session = Depends(get_db)):
             "status": "success",
             "message": "Database ready with 100% real data from Neon",
             "data": {
-                "filings": filing_count,
-                "periods": period_count,
-                "companies": company_count,
+                "filings": filing_count or 0,
+                "periods": period_count or 0,
+                "companies": company_count or 0,
                 "metrics_loaded": len(metrics)
             },
             "instructions": "API is ready to accept /api/query requests with real financial data"
