@@ -65,9 +65,15 @@ async function onQQCompanyChange() {
   try {
     const data = await apiFetch(`/api/available-data?company_id=${companyId}`);
 
-    // Populate metrics
+    // Populate metrics — sort to put Operating Profit and Profit Before Tax on top
     metricSel.innerHTML = '<option value="">— select metric —</option>';
-    (data.metrics || []).forEach(m => {
+    const priorityNames = ['Operating Profit', 'Profit Before Tax'];
+    const metrics = data.metrics || [];
+    const sorted = [
+      ...metrics.filter(m => priorityNames.includes(m.display_name)),
+      ...metrics.filter(m => !priorityNames.includes(m.display_name))
+    ];
+    sorted.forEach(m => {
       const opt = document.createElement('option');
       opt.value = m.name;         // column name e.g. "revenue_from_operations"
       opt.dataset.display = m.display_name;
