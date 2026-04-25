@@ -468,6 +468,22 @@ def seed_database(db: Session = Depends(get_db)):
         log.info("Loading metrics from database...")
         metrics = load_metrics_from_database(db)
         
+        # Show which DB host is connected (for debugging Render vs local)
+        import os
+        db_url = os.getenv("DATABASE_URL", "")
+        # Mask password but show host
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(db_url)
+            db_host = parsed.hostname or "unknown"
+        except Exception:
+            db_host = "unknown"
+        
+        warning = None
+        if filing_count == 0 and company_count == 0:
+            warning = f"⚠️ Connected to '{db_host}' but database appears empty. On Render, ensure DATABASE_URL env var points to your Neon database (neon.tech), not a Render-provisioned PostgreSQL."
+            log.warning(warning)
+        
         return {
             "status": "success",
             "message": "Database ready with 100% real data from Neon",
@@ -476,11 +492,13 @@ def seed_database(db: Session = Depends(get_db)):
                 "periods": period_count or 0,
                 "companies": company_count or 0,
                 "metrics_loaded": len(metrics),
+                "db_host": db_host,
                 "sync_details": {
                     "companies_synced": company_sync.get("synced", 0),
                     "metrics_synced": metric_sync.get("synced", 0)
                 }
             },
+            "warning": warning,
             "instructions": "API is ready to accept /api/query requests with real financial data"
         }
     except Exception as e:
