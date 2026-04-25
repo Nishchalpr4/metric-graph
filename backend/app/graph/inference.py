@@ -45,6 +45,34 @@ _MAX_DEPTH = 3
 # Public entry-point
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _display_to_column(metric_name: str, db: Session) -> str:
+    """
+    Convert display name like 'Operating Profit' to column name 'operating_profit'.
+    Tries: exact match, snake_case conversion, MetricDefinitions lookup.
+    """
+    from ..utils.metric_definitions import MetricDefinitions
+    # Try exact match first
+    all_metrics = MetricDefinitions.discover_all_metrics(db)
+    if metric_name in all_metrics:
+        return metric_name
+    # Try snake_case conversion: 'Operating Profit' -> 'operating_profit'
+    snake = metric_name.lower().replace(' ', '_').replace('/', '_').replace('-', '_')
+    if snake in all_metrics:
+        return snake
+    # Known display name overrides (cases where snake_case doesn't match column name)
+    _DISPLAY_MAP = {
+        "net profit": "pnl_for_period",
+        "profit": "pnl_for_period",
+        "revenue": "revenue_from_operations",
+        "ebitda": "operating_profit",
+    }
+    lower = metric_name.lower()
+    if lower in _DISPLAY_MAP and _DISPLAY_MAP[lower] in all_metrics:
+        return _DISPLAY_MAP[lower]
+    # Return original as fallback
+    return metric_name
+
+
 def analyse(
     *,
     metric_name: str,
@@ -57,6 +85,8 @@ def analyse(
     """
     Top-level inference call.  Returns a structured explanation dict.
     """
+    # Normalize metric name from display name to column name
+    metric_key = _display_to_column(metric_name, db)
     # Load ALL metric values for both periods in one pass
     all_curr = _load_all(db, period, segment)
     all_prev = _load_all(db, compare_period, segment)
@@ -97,8 +127,8 @@ def analyse(
         )
         return _error(error_msg)
 
-    curr_val = all_curr.get(metric_name)
-    prev_val = all_prev.get(metric_name)
+    curr_val = all_curr.get(metric_key)
+    prev_val = all_prev.get(metric_key)
 
     if curr_val is None or prev_val is None:
         return _error(
@@ -111,7 +141,7 @@ def analyse(
     direction = "increased" if total_change >= 0 else "decreased"
 
     metrics_registry = METRIC_REGISTRY()
-    meta = metrics_registry.get(metric_name, {})
+    meta = metrics_registry.get(metric_key, metrics_registry.get(metric_name, {}))
 
     # Recursive decomposition
     drivers = _decompose(
@@ -187,18 +217,25 @@ def _load_all(db: Session, period: str, segment: str) -> Dict[str, float]:
     accessor = FinancialDataAccessor(db)
     result = {}
     
-    # Get all available metrics from the registry
+    # Get ALL available metrics from database schema (not just registry subset)
+    from ..utils.metric_definitions import MetricDefinitions
+    all_discovered = MetricDefinitions.discover_all_metrics(db)
+    
+    # Also include METRIC_REGISTRY metrics (computed/derived ones)
     metrics_registry = METRIC_REGISTRY()
     
-    if not metrics_registry:
-        log.error(f"No metrics in registry - cannot load data")
+    # Merge: discovered DB columns + registry derived metrics
+    combined_metrics = {**{k: {} for k in all_discovered.keys()}, **metrics_registry}
+    
+    if not combined_metrics:
+        log.error(f"No metrics available - cannot load data")
         return result
     
-    log.debug(f"Loading {len(metrics_registry)} metrics for {segment} in {period}")
+    log.debug(f"Loading {len(combined_metrics)} metrics for {segment} in {period}")
     
-    # Try to load each registered metric
+    # Try to load each metric
     failed_metrics = []
-    for metric_name, meta in metrics_registry.items():
+    for metric_name, meta in combined_metrics.items():
         try:
             value = accessor.get_metric_value(
                 metric_canonical_name=metric_name,

@@ -138,6 +138,8 @@ def parse_query(raw: str, db: Session) -> ParsedQuery:
         raise ValueError("No periods found in financials_period table")
 
     # ── 4. Load available companies from DB ────────────────────────────────
+    # For real financial data: Load from canonical companies only (NOT TimeSeriesData)
+    # TimeSeriesData is legacy test data that may have placeholder names
     from ..models.db_models import CanonicalCompany, CompanyAlias
     try:
         companies_db = db.query(CanonicalCompany).filter(
@@ -145,10 +147,6 @@ def parse_query(raw: str, db: Session) -> ParsedQuery:
         ).all()
         
         company_aliases_db = db.query(CompanyAlias).all()
-        
-        # Load unique segments from TimeSeriesData (operational entities)
-        segments = db.query(TimeSeriesData.segment).distinct().all()
-        segment_names = [s[0] for s in segments if s[0]]
         
         # Build company lookup: alias → canonical name
         alias_to_company = {}
@@ -160,14 +158,10 @@ def parse_query(raw: str, db: Session) -> ParsedQuery:
             if company_canonical:
                 alias_to_company[alias_record.surface_form.lower()] = company_canonical
         
-        # Also add canonical names themselves as aliases
+        # Also add canonical names themselves as aliases (ALWAYS - this is the source of truth)
         for company in companies_db:
-            alias_to_company[company.official_legal_name.lower()] = company.official_legal_name
-            
-        # Add operational segments as aliases
-        for segment_name in segment_names:
-            if segment_name.lower() not in alias_to_company:
-                alias_to_company[segment_name.lower()] = segment_name
+            if company.official_legal_name:
+                alias_to_company[company.official_legal_name.lower()] = company.official_legal_name
                 
     except Exception as e:
         raise ValueError(f"Cannot load companies from database: {e}")

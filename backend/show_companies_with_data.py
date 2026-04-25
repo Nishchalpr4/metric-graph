@@ -3,34 +3,74 @@ from dotenv import load_dotenv
 import os
 
 load_dotenv()
-db_url = os.getenv("DATABASE_URL")
-
+db_url = os.getenv('DATABASE_URL')
 conn = psycopg2.connect(db_url)
 cur = conn.cursor()
 
-query = """
-SELECT 
-    mcc.company_id,
-    mcc.official_legal_name,
-    COUNT(fp.pnl_id) as pnl_records
-FROM mappings_canonical_companies mcc
-INNER JOIN financials_filing ff ON mcc.company_id = ff.company_id
-INNER JOIN financials_pnl fp ON ff.filing_id = fp.filing_id
-GROUP BY mcc.company_id, mcc.official_legal_name
-ORDER BY pnl_records DESC
-LIMIT 20;
-"""
+print('=== SCHEMA OF financials_company ===')
+print()
 
-cur.execute(query)
-print("\n" + "="*100)
-print("COMPANIES WITH P&L DATA (Top 20)")
-print("="*100)
-print(f"{'ID':<5} {'Company Name':<50} {'Records':<10}")
-print("-"*100)
+cur.execute("""
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_name = 'financials_company'
+ORDER BY ordinal_position
+""")
+cols = cur.fetchall()
 
-for row in cur.fetchall():
-    company_id, name, records = row
-    print(f"{company_id:<5} {name:<50} {records:<10}")
+if not cols:
+    print('Table financials_company does NOT exist or has no columns.')
+    print()
+    print('Available tables:')
+    cur.execute("""
+    SELECT table_name FROM information_schema.tables
+    WHERE table_schema = 'public' ORDER BY table_name
+    """)
+    for (t,) in cur.fetchall():
+        print(f'  {t}')
+else:
+    print(f'{"Column":35} {"Type":25} {"Nullable"}')
+    print('-' * 70)
+    for col_name, data_type, nullable in cols:
+        print(f'{col_name:35} {data_type:25} {nullable}')
+    print()
+
+    print('=== FIRST 10 ROWS OF financials_company ===')
+    print()
+    col_names = [c[0] for c in cols]
+    cur.execute('SELECT * FROM financials_company LIMIT 10')
+    rows = cur.fetchall()
+    for idx, row in enumerate(rows, 1):
+        print(f'Row {idx}:')
+        for cn, val in zip(col_names, row):
+            print(f'  {cn}: {val}')
+        print()
+
+print()
+print('=== COMPANY ID OVERLAP: financials_company vs financials_filing ===')
+print()
+
+try:
+    cur.execute("""
+    SELECT fc.company_id
+    FROM financials_company fc
+    ORDER BY fc.company_id
+    LIMIT 20
+    """)
+    fc_ids = [r[0] for r in cur.fetchall()]
+    print(f'First 20 company_ids in financials_company: {fc_ids}')
+    print()
+
+    check_ids = [22, 23, 24, 243]
+    for cid in check_ids:
+        cur.execute('SELECT COUNT(*) FROM financials_filing WHERE company_id = %s', (cid,))
+        filing_count = cur.fetchone()[0]
+        in_fc = cid in fc_ids
+        print(f'  company_id={cid}: in financials_company={in_fc}, filings={filing_count}')
+except Exception as e:
+    print(f'Error checking overlap: {e}')
 
 cur.close()
 conn.close()
+print()
+print('Done.')

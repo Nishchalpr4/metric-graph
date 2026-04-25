@@ -39,6 +39,16 @@ def _get_graph(db: Session):
     return _graph_cache["graph"]
 
 
+@router.post("/refresh-graph")
+def refresh_graph(db: Session = Depends(get_db)):
+    """Force a rebuild of the in-memory causal graph (clears cache)."""
+    _graph_cache.clear()
+    g = _get_graph(db)
+    from ..graph.builder import graph_to_dict
+    d = graph_to_dict(g)
+    return {"nodes": len(d["nodes"]), "edges": len(d["edges"]), "status": "rebuilt"}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Request / Response models
 # ─────────────────────────────────────────────────────────────────────────────
@@ -197,26 +207,6 @@ def get_companies_with_data(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# The PnL columns that map to our 17 core metrics (display_name → column_name)
-_PNL_METRIC_COLUMNS = {
-    "Revenue From Operations": "revenue_from_operations",
-    "Cost of Material":        "cost_of_material",
-    "Employee Benefit Expense":"employee_benefit_expense",
-    "Depreciation":            "depreciation",
-    "Other Expenses":          "other_expenses",
-    "Operating Profit":        "operating_profit",
-    "Profit Before Tax":       "profit_before_tax",
-    "Net Profit":              "pnl_for_period",
-    "Interest Expense":        "interest_expense",
-    "Tax Expense":             "tax_expense",
-    "Other Income":            "other_income",
-    "Total Income":            "total_income",
-    "Total Expense":           "total_expense",
-    "Basic EPS":               "basic_eps",
-    "Diluted EPS":             "diluted_eps",
-}
-
-
 @router.get("/available-data")
 def get_available_data(company_id: int, db: Session = Depends(get_db)):
     """
@@ -227,7 +217,8 @@ def get_available_data(company_id: int, db: Session = Depends(get_db)):
       Path 1: period_id FK → financials_period.quarter + fiscal_year
       Path 2: reporting_end_date matches financials_period.calendar_end (for broken FKs)
 
-    Any period/metric shown here is guaranteed to return data.
+    IMPORTANT: Only returns periods that have AT LEAST ONE metric with actual data.
+    Filters out periods with no usable data.
     """
     try:
         # Dual-path query: get all (quarter, fiscal_year, filing_id, audited, nature)
@@ -272,23 +263,42 @@ def get_available_data(company_id: int, db: Session = Depends(get_db)):
         }
         best_filing_ids = list(best_by_period.values())
 
-        # Only periods where best filing actually has a PnL row
-        valid_periods = list(best_by_period.keys())
+        # Dynamically discover all PnL metrics from DB schema (no hardcoding)
+        from ..utils.metric_definitions import MetricDefinitions
+        all_discovered = MetricDefinitions.discover_all_metrics(db)
+        pnl_metrics = {
+            col: display_name
+            for col, (table_name, display_name) in all_discovered.items()
+            if table_name == "financials_pnl"
+        }
 
-        # For each metric column, check if ANY best filing has a non-null value
+        # For each metric column, get the list of periods where it has data
         metrics_with_data = []
-        for display_name, col in _PNL_METRIC_COLUMNS.items():
-            result = db.execute(text(f"""
-                SELECT 1 FROM financials_pnl
-                WHERE filing_id = ANY(:fids) AND {col} IS NOT NULL
-                LIMIT 1
-            """), {"fids": best_filing_ids}).fetchone()
+        period_metric_data = defaultdict(set)  # period -> set of metrics with data
 
-            if result:
+        for col, display_name in pnl_metrics.items():
+            # Find all periods where this metric has non-null data
+            periods_for_metric = db.execute(text(f"""
+                SELECT DISTINCT CONCAT(fp.quarter, ' ', fp.fiscal_year) as period_label
+                FROM financials_pnl pnl
+                INNER JOIN financials_filing ff ON pnl.filing_id = ff.filing_id
+                INNER JOIN financials_period fp ON (
+                    fp.period_id = ff.period_id
+                    OR fp.calendar_end = ff.reporting_end_date
+                )
+                WHERE ff.company_id = :cid AND pnl.{col} IS NOT NULL
+            """), {"cid": company_id}).fetchall()
+            
+            if periods_for_metric:
                 metrics_with_data.append({
                     "display_name": display_name,
                     "name": col,
                 })
+                for (period_label,) in periods_for_metric:
+                    period_metric_data[period_label].add(display_name)
+
+        # Only keep periods that have AT LEAST ONE metric with data
+        valid_periods = list(period_metric_data.keys())
 
         # Sort periods chronologically (fiscal_year ASC, then quarter number ASC)
         def period_sort_key(p: str):
@@ -443,13 +453,18 @@ def seed_database(db: Session = Depends(get_db)):
         # Step 0.5: Sync real company names from financials_company table (direct SQL)
         log.info("Syncing real company names from financials_company...")
         try:
+            # Update using proper PostgreSQL syntax with subquery
             updated = db.execute(text("""
-                UPDATE mappings_canonical_companies c
-                SET official_legal_name = fc.company_name, is_active = true
-                FROM financials_company fc
-                WHERE c.company_id = fc.company_id
-                  AND fc.company_name IS NOT NULL
-                  AND fc.company_name != ''
+                UPDATE mappings_canonical_companies
+                SET 
+                    official_legal_name = fc.company_name,
+                    is_active = true
+                FROM (
+                    SELECT DISTINCT company_id, company_name
+                    FROM financials_company
+                    WHERE company_name IS NOT NULL AND company_name != ''
+                ) fc
+                WHERE mappings_canonical_companies.company_id = fc.company_id
             """)).rowcount
             db.commit()
             log.info(f"Updated {updated} company names from financials_company")
@@ -484,6 +499,26 @@ def seed_database(db: Session = Depends(get_db)):
         # Step 3: Load metrics into cache
         log.info("Loading metrics from database...")
         metrics = load_metrics_from_database(db)
+        
+        # Step 4: FINAL CLEANUP - Ensure all company names are synced (do this LAST to override any placeholders)
+        log.info("Finalizing company names...")
+        try:
+            final_update = db.execute(text("""
+                UPDATE mappings_canonical_companies mcc
+                SET official_legal_name = fc.company_name, is_active = true
+                FROM (
+                    SELECT company_id, company_name
+                    FROM financials_company
+                    WHERE company_name IS NOT NULL AND company_name != ''
+                ) fc
+                WHERE mcc.company_id = fc.company_id
+                  AND mcc.official_legal_name LIKE 'Company_%'
+            """)).rowcount
+            db.commit()
+            log.info(f"Final sync updated {final_update} placeholder company names with real names")
+        except Exception as e:
+            log.warning(f"Final company name sync failed: {e}")
+            db.rollback()
         
         # Clear graph cache so it rebuilds with fresh company/metric data
         _graph_cache.clear()

@@ -424,9 +424,11 @@ async function loadGraphInPanel() {
       const edgeSet = new Set();
       const nodeSet = new Set(metricsUsed);
       allEdges.forEach(e => {
-        // Only include edges where the TARGET is an analyzed metric
-        // This keeps driver→metric edges and drops metric→consumer edges
-        if (metricsUsed.includes(e.target)) {
+        // Include edges where EITHER source or target is an analyzed metric.
+        // This shows both what drives the metric AND what the metric drives,
+        // which prevents single-node graphs when the queried metric has no
+        // incoming edges (e.g. base metrics like revenue_from_operations).
+        if (metricsUsed.includes(e.target) || metricsUsed.includes(e.source)) {
           nodeSet.add(e.source);
           nodeSet.add(e.target);
           edgeSet.add(`${e.source}→${e.target}`);

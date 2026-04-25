@@ -135,10 +135,9 @@ DEFAULT_RELATIONSHIPS: List[Dict[str, Any]] = [
     
     {"source": "ebitda", "target": "ebitda_margin_pct", "type": "formula_dependency", "direction": "positive", "strength": 1.0},
     {"source": "revenue_from_operations", "target": "ebitda_margin_pct", "type": "formula_dependency", "direction": "negative", "strength": 1.0},
-
-    # Causal drivers (Business link)
-    {"source": "revenue_from_operations", "target": "employee_benefit_expense", "type": "causal_driver", "direction": "positive", "strength": 0.35, "explanation": "As revenue grows, hiring often increases to support scale"},
-    {"source": "cost_of_material", "target": "revenue_from_operations", "type": "causal_driver", "direction": "positive", "strength": 0.45, "explanation": "Increased materials cost can sometimes reflect higher sales volume"},
+    # Causal driver relationships are NOT hardcoded here.
+    # They are inferred at runtime by _infer_relationships_from_data() in builder.py
+    # using Pearson correlations on actual financial data.
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────

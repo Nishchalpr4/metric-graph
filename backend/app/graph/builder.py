@@ -112,10 +112,11 @@ def build_graph(db: Session) -> nx.DiGraph:
         print(f"Warning: Could not add formula edges: {e}")
         db.rollback()
 
-    # If relationship table is empty, infer relationships from P&L structure
-    if relationship_count < 3:
-        print("MetricRelationship table has few entries, inferring relationships...")
-        _infer_pnl_relationships(G)
+    # Always infer additional relationships from actual data correlations.
+    # This is the data-driven fallback that requires no hardcoded metric names.
+    # Uses if-not-exists guard so it won't overwrite seeded expert edges.
+    print("Inferring relationships from data correlations (Pearson)...")
+    _infer_relationships_from_data(G, db)
 
     return G
 
@@ -138,84 +139,118 @@ def _categorize_metric(metric_name: str, table_name: str) -> str:
     return "Financial"
 
 
-def _infer_pnl_relationships(G: nx.DiGraph):
+def _infer_relationships_from_data(G: nx.DiGraph, db: Session):
     """
-    Infer causal relationships based on standard P&L structure.
-    
-    Standard P&L flow:
-    Revenue - Costs/Expenses = Operating Profit
-    Operating Profit - Interest/Tax = Net Profit
+    Infer causal relationships by computing Pearson correlations between
+    all metric pairs from actual financial data in the database.
+
+    No metric names are hardcoded here. Relationships are discovered
+    entirely from statistical patterns in the real filing data:
+      - Edge direction: upstream → downstream using column-name position heuristic
+        (revenue/cost columns precede profit columns in P&L flow)
+      - Edge weight (strength): absolute Pearson r
+      - Edge sign (direction): positive or negative based on correlation sign
     """
-    # Known P&L metrics and their relationships
-    pnl_structure = {
-        # Revenue metrics (top line)
-        "revenue_from_operations": {
-            "drives": ["total_income", "operating_profit", "profit_before_tax", "pnl_for_period"],
-            "direction": "positive",
-            "strength": 0.9,
-        },
-        "other_income": {
-            "drives": ["total_income", "profit_before_tax"],
-            "direction": "positive",
-            "strength": 0.5,
-        },
-        # Cost metrics (reduce profit)
-        "cost_of_material": {
-            "drives": ["operating_profit", "profit_before_tax", "pnl_for_period"],
-            "direction": "negative",
-            "strength": 0.8,
-        },
-        "employee_benefit_expense": {
-            "drives": ["operating_profit", "profit_before_tax", "pnl_for_period"],
-            "direction": "negative",
-            "strength": 0.7,
-        },
-        "depreciation": {
-            "drives": ["operating_profit", "profit_before_tax", "pnl_for_period"],
-            "direction": "negative",
-            "strength": 0.6,
-        },
-        "interest_expense": {
-            "drives": ["profit_before_tax", "pnl_for_period"],
-            "direction": "negative",
-            "strength": 0.7,
-        },
-        "tax_expense": {
-            "drives": ["pnl_for_period", "comprehensive_income_for_the_period"],
-            "direction": "negative",
-            "strength": 0.8,
-        },
-        # Profit metrics
-        "operating_profit": {
-            "drives": ["profit_before_tax", "pnl_for_period"],
-            "direction": "positive",
-            "strength": 0.9,
-        },
-        "profit_before_tax": {
-            "drives": ["pnl_for_period"],
-            "direction": "positive",
-            "strength": 0.95,
-        },
-        "pnl_for_period": {
-            "drives": ["comprehensive_income_for_the_period", "basic_eps"],
-            "direction": "positive",
-            "strength": 0.95,
-        },
-    }
-    
-    # Add inferred relationships to graph
-    for source_metric, config in pnl_structure.items():
-        if source_metric in G.nodes:
-            for target_metric in config["drives"]:
-                if target_metric in G.nodes:
-                    # Only add if edge doesn't exist
-                    if not G.has_edge(source_metric, target_metric):
-                        G.add_edge(source_metric, target_metric, **{
-                            "relationship_type": "causal_driver",
-                            "direction": config["direction"],
-                            "strength": config["strength"],
-                            "explanation": f"{source_metric} {'increases' if config['direction'] == 'positive' else 'decreases'} {target_metric}",
-                        })
+    import numpy as np
+    from sqlalchemy import text
+
+    # Discover all PnL metric columns directly from DB schema (no hardcoding)
+    pnl_nodes = [
+        col
+        for col, (table_name, _) in MetricDefinitions.discover_all_metrics(db).items()
+        if table_name == "financials_pnl" and col in G.nodes
+    ]
+
+    if len(pnl_nodes) < 2:
+        return
+
+    # Fetch all values for these columns in one query
+    cols_sql = ", ".join(f'"{col}"' for col in pnl_nodes)
+    try:
+        rows = db.execute(text(f"SELECT {cols_sql} FROM financials_pnl")).fetchall()
+    except Exception as e:
+        print(f"Warning: Could not query financials_pnl for correlation: {e}")
+        db.rollback()
+        return
+
+    if len(rows) < 20:
+        return
+
+    data = np.array(
+        [[float(v) if v is not None else np.nan for v in row] for row in rows],
+        dtype=float,
+    )
+
+    def _flow_rank(col_name: str) -> int:
+        """
+        Score a metric column's position in the P&L waterfall
+        purely from its name, without listing specific column names.
+        Lower = more upstream (raw input), higher = more derived/summary.
+        """
+        n = col_name.lower()
+        # Topmost: raw revenues and top-line income
+        if any(t in n for t in ("revenue", "sales", "turnover")):
+            return 0
+        # Costs and operating expenses (reduce profit)
+        if any(t in n for t in ("cost", "expense", "depreciation", "amortisation", "amortization")):
+            return 1
+        # Intermediate profit lines
+        if any(t in n for t in ("gross", "ebitda", "ebit", "operating_profit", "operating profit")):
+            return 2
+        # Below-the-line items
+        if any(t in n for t in ("interest", "finance", "other_income", "other income")):
+            return 3
+        # Pre-tax
+        if "before_tax" in n or "pbt" in n:
+            return 4
+        # Net profit / bottom line
+        if any(t in n for t in ("net_profit", "pnl_for", "profit_after", "comprehensive", "net profit")):
+            return 5
+        # Per-share / derived ratios
+        if any(t in n for t in ("eps", "per_share", "margin", "ratio", "return")):
+            return 6
+        return 3  # default: mid-range
+
+    CORR_THRESHOLD = 0.40
+
+    edges_added = 0
+    n = len(pnl_nodes)
+    for i in range(n):
+        for j in range(i + 1, n):
+            vi, vj = data[:, i], data[:, j]
+            mask = ~(np.isnan(vi) | np.isnan(vj))
+            if mask.sum() < 20:
+                continue
+
+            r = np.corrcoef(vi[mask], vj[mask])[0, 1]
+            if np.isnan(r) or abs(r) < CORR_THRESHOLD:
+                continue
+
+            ri = _flow_rank(pnl_nodes[i])
+            rj = _flow_rank(pnl_nodes[j])
+
+            # Edge goes from the more upstream metric to the more downstream one.
+            # If same rank, use alphabetical order to keep the graph acyclic.
+            if ri < rj or (ri == rj and pnl_nodes[i] < pnl_nodes[j]):
+                src, tgt = pnl_nodes[i], pnl_nodes[j]
+            else:
+                src, tgt = pnl_nodes[j], pnl_nodes[i]
+
+            direction = "positive" if r > 0 else "negative"
+
+            if not G.has_edge(src, tgt):
+                G.add_edge(src, tgt, **{
+                    "relationship_type": "causal_driver",
+                    "direction": direction,
+                    "strength": round(float(abs(r)), 3),
+                    "explanation": (
+                        f"Pearson r={r:.2f} across {int(mask.sum())} company-period observations"
+                    ),
+                })
+                edges_added += 1
+
+    print(f"  Inferred {edges_added} relationships from data correlations ({n} metrics, {len(rows)} observations)")
+
 
 
 
