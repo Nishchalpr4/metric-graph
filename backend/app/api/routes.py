@@ -440,6 +440,23 @@ def seed_database(db: Session = Depends(get_db)):
         log.info("Ensuring database schema exists...")
         seed_all(db)
         
+        # Step 0.5: Sync real company names from financials_company table (direct SQL)
+        log.info("Syncing real company names from financials_company...")
+        try:
+            updated = db.execute(text("""
+                UPDATE mappings_canonical_companies c
+                SET official_legal_name = fc.company_name, is_active = true
+                FROM financials_company fc
+                WHERE c.company_id = fc.company_id
+                  AND fc.company_name IS NOT NULL
+                  AND fc.company_name != ''
+            """)).rowcount
+            db.commit()
+            log.info(f"Updated {updated} company names from financials_company")
+        except Exception as e:
+            log.warning(f"Could not sync company names: {e}")
+            db.rollback()
+        
         # Step 1: Sync canonical data from Neon financial tables
         log.info("Syncing canonical companies from Neon financial data...")
         neon_integration = NeonDatabaseIntegration(db)
@@ -467,6 +484,9 @@ def seed_database(db: Session = Depends(get_db)):
         # Step 3: Load metrics into cache
         log.info("Loading metrics from database...")
         metrics = load_metrics_from_database(db)
+        
+        # Clear graph cache so it rebuilds with fresh company/metric data
+        _graph_cache.clear()
         
         # Show which DB host is connected (for debugging Render vs local)
         import os

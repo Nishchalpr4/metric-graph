@@ -9,7 +9,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from ..models.db_models import (
     CanonicalCompany, CanonicalMetric, CanonicalMetricAlias, CompanyAlias,
@@ -45,7 +45,7 @@ class NeonDatabaseIntegration:
         Returns:
             Statistics about synced companies
         """
-        from sqlalchemy import distinct, text
+        from sqlalchemy import distinct
         
         # Get all unique company IDs that actually have filings
         filing_company_ids = self.db.query(distinct(FinancialsFiling.company_id)).all()
@@ -54,43 +54,67 @@ class NeonDatabaseIntegration:
             log.warning("No companies found in filings")
             return {"synced": 0, "skipped": 0}
         
+        # Build a lookup of real company names from financials_company table
+        real_names = {}
+        try:
+            rows = self.db.execute(text(
+                "SELECT company_id, company_name FROM financials_company"
+            )).fetchall()
+            for cid, cname in rows:
+                if cname:
+                    real_names[cid] = cname.strip()
+        except Exception as e:
+            log.warning(f"Could not read financials_company for names: {e}")
+
         synced_count = 0
         skipped_count = 0
         
         for (company_id,) in filing_company_ids:
+            # Prefer real name from financials_company, then CompanyAlias, then placeholder
+            company_name = real_names.get(company_id)
+            if not company_name:
+                alias = self.db.query(CompanyAlias).filter(
+                    CompanyAlias.company_id == company_id
+                ).first()
+                company_name = alias.surface_form if alias else f"Company_{company_id}"
+
+            # Get industry from financials_company if available
+            industry = None
+            try:
+                fc_row = self.db.execute(text(
+                    "SELECT industry FROM financials_company WHERE company_id = :cid"
+                ), {"cid": company_id}).first()
+                if fc_row:
+                    industry = fc_row[0]
+            except Exception:
+                pass
+
             # Check if company already exists in canonical table
             existing = self.db.query(CanonicalCompany).filter(
                 CanonicalCompany.company_id == company_id
             ).first()
             
-            # Try to get company name from CompanyAlias table
-            alias = self.db.query(CompanyAlias).filter(
-                CompanyAlias.company_id == company_id
-            ).first()
-            
-            company_name = alias.surface_form if alias else f"Company_{company_id}"
-            
             if existing:
-                # Update if needed
                 existing.official_legal_name = company_name
                 existing.is_active = True
+                if industry:
+                    existing.industry = industry
                 skipped_count += 1
             else:
-                # Create new company entry
                 company = CanonicalCompany(
                     company_id=company_id,
                     official_legal_name=company_name,
-                    domicile_country="IN",  # Default to India (Neon database context)
+                    domicile_country="IN",
                     lei_code=None,
-                    sector="Financial Services",
-                    industry="Securities",
+                    sector=None,
+                    industry=industry,
                     is_active=True
                 )
                 self.db.add(company)
                 synced_count += 1
         
         self.db.commit()
-        log.info(f"Synced {synced_count} new companies, {skipped_count} already existed")
+        log.info(f"Synced {synced_count} new companies, {skipped_count} updated with real names")
         
         return {"synced": synced_count, "skipped": skipped_count}
     
